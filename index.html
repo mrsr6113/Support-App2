@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Vision Pro - 統合システム</title>
+    <!-- APIキー設定ファイルを読み込み -->
+    <script src="config.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .main-container {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            height: calc(100vh - 40px);
+        }
+
+        /* Header */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 24px;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        /* Chat Panel */
+        .chat-panel {
+            flex: 1;
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin-top: 60px;
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 20px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            max-height: 400px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 15px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+        }
+
+        .message.assistant {
+            background: white;
+            border: 1px solid #ddd;
+        }
+
+        .message.system {
+            background: #28a745;
+            color: white;
+            text-align: center;
+            max-width: 100%;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 10px 15px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            max-width: 80%;
+            margin-bottom: 15px;
+            font-style: italic;
+            color: #666;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .ai-provider-select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 20px;
+            font-size: 12px;
+            background: white;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 25px;
+            font-size: 14px;
+        }
+
+        .chat-input:disabled {
+            background: #f5f5f5;
+            color: #999;
+        }
+
+        /* Vision Panel */
+        .vision-panel {
+            flex: 1;
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin-top: 60px;
+        }
+
+        .vision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .vision-mode-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            border: none;
+            background: #f0f0f0;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .video-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        #videoFeed {
+            width: 100%;
+            height: 300px;
+            border-radius: 15px;
+            border: 3px solid #667eea;
+            background: #000;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+
+        .status-indicator {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(40, 167, 69, 0.9);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+
+        .status-processing {
+            background: rgba(255, 193, 7, 0.9);
+        }
+
+        .status-error {
+            background: rgba(220, 53, 69, 0.9);
+        }
+
+        .analysis-results {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            min-height: 120px;
+        }
+
+        .result-card h4 {
+            margin-bottom: 10px;
+            color: #495057;
+            font-size: 14px;
+        }
+
+        .result-content {
+            font-size: 13px;
+            line-height: 1.4;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary { background: #667eea; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-warning { background: #ffc107; color: #212529; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-info { background: #17a2b8; color: white; }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        /* Settings Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 800px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .modal-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .modal-tab {
+            padding: 10px 20px;
+            border: none;
+            background: #f0f0f0;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .modal-tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .input-group input, .input-group select, .input-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .input-group small {
+            color: #666;
+            font-size: 12px;
+            margin-top: 5px;
+            display: block;
+        }
+
+        .api-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+
+        .api-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .api-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .api-status.untested {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Analytics Panel */
+        .analytics-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .analytics-item {
+            text-align: center;
+            padding: 10px;
+            background: white;
+            border-radius: 10px;
+        }
+
+        .analytics-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .analytics-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+                height: auto;
+            }
+            
+            .analysis-results {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 18px;
+            }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Config error styles */
+        .config-error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px;
+            text-align: center;
+            border: 2px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <!-- Config error check -->
+    <div id="configError" class="config-error hidden">
+        <h2>⚠️ 設定ファイルが見つかりません</h2>
+        <p>config.js ファイルを作成し、APIキーを設定してください。</p>
+        <p>詳細は README.md をご確認ください。</p>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <h1>🚀 AI Vision Pro - 統合システム</h1>
+        <div class="header-controls">
+            <button class="btn btn-info" onclick="openSettings()">⚙️ 設定</button>
+            <button class="btn btn-warning" onclick="showAnalytics()">📊 統計</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Chat Panel -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <h2>💬 AI チャット</h2>
+                <div>
+                    <button class="btn btn-info" onclick="captureAndSend()" id="shareBtn" disabled>📷 画像共有</button>
+                </div>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="message system">AI Vision統合チャットシステムが開始されました</div>
+                <div class="message assistant">こんにちは！まずは⚙️設定ボタンからAPIキーを設定してください。</div>
+                <div class="message system" id="statusMessage">❌ APIキーの設定が必要です。⚙️設定ボタンから設定してください。</div>
+            </div>
+            
+            <div class="typing-indicator" id="typingIndicator">
+                <span>AI が入力中...</span>
+            </div>
+            
+            <div class="chat-input-area">
+                <select class="ai-provider-select" id="aiProvider">
+                    <option value="gemini">Gemini</option>
+                    <option value="claude">Claude</option>
+                    <option value="gpt">ChatGPT</option>
+                </select>
+                <input type="text" class="chat-input" id="chatInput" placeholder="APIキーを設定後、AIと会話できます..." disabled onkeypress="handleChatKeyPress(event)">
+                <button class="btn btn-primary" onclick="sendMessage()" id="sendBtn" disabled>送信</button>
+            </div>
+        </div>
+
+        <!-- Vision Panel -->
+        <div class="vision-panel">
+            <div class="vision-header">
+                <h2>👁️ Live Vision Analysis</h2>
+                <button class="btn btn-primary" id="visionToggle" onclick="toggleVision()" disabled>🚀 開始</button>
+            </div>
+
+            <div class="vision-mode-tabs">
+                <button class="tab active" data-mode="general">物体名のみ</button>
+                <button class="tab" data-mode="detailed">詳細分析</button>
+            </div>
+
+            <div class="video-container">
+                <video id="videoFeed" autoplay playsinline></video>
+                <canvas id="canvas" class="hidden"></canvas>
+                <div class="video-overlay" id="statusOverlay">📹 Camera Ready</div>
+                <div class="status-indicator" id="statusIndicator">設定が必要</div>
+            </div>
+
+            <div class="analysis-results">
+                <div class="result-card">
+                    <h4>🔍 Vision API</h4>
+                    <div class="result-content" id="visionResults">APIキーを設定してください...</div>
+                </div>
+                <div class="result-card">
+                    <h4>🤖 AI分析</h4>
+                    <div class="result-content" id="analysisResults">Gemini APIキーを設定してください...</div>
+                </div>
+                <div class="result-card">
+                    <h4>🌐 翻訳</h4>
+                    <div class="result-content" id="translationResults">Translate APIキーを設定してください...</div>
+                </div>
+                <div class="result-card">
+                    <h4>🔊 音声</h4>
+                    <div class="result-content" id="speechResults">Text-to-Speech APIキーを設定してください...</div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-success" id="speechBtn" onclick="toggleSpeech()" disabled>🔇 音声OFF</button>
+                <button class="btn btn-info" onclick="takeSnapshot()" id="snapshotBtn" disabled>📸 スナップ</button>
+                <select id="intervalSelect" disabled>
+                    <option value="5000">5秒</option>
+                    <option value="10000">10秒</option>
+                    <option value="15000" selected>15秒</option>
+                    <option value="30000">30秒</option>
+                    <option value="60000">1分</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>⚙️ システム設定</h2>
+                <button class="btn btn-danger" onclick="closeSettings()">✕</button>
+            </div>
+
+            <div class="modal-tabs">
+                <button class="modal-tab active" data-tab="chat">💬 チャットAPI</button>
+                <button class="modal-tab" data-tab="vision">👁️ Vision API</button>
+                <button class="modal-tab" data-tab="analysis">🔬 分析設定</button>
+            </div>
+
+            <!-- Chat API Tab -->
+            <div class="tab-content active" id="chat-tab">
+                <h3>チャット用APIキー設定</h3>
+                
+                <div class="input-group">
+                    <label for="geminiChatKey">Gemini API Key <span class="api-status untested" id="geminiChatStatus">未テスト</span></label>
+                    <input type="password" id="geminiChatKey" placeholder="Gemini APIキーを入力してください">
+                    <small>取得先: <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a></small>
+                </div>
+
+                <div class="input-group">
+                    <label for="claudeKey">Claude API Key <span class="api-status untested" id="claudeStatus">未テスト</span></label>
+                    <input type="password" id="claudeKey" placeholder="Claude APIキーを入力してください">
+                    <small>取得先: <a href="https://console.anthropic.com/" target="_blank">Anthropic Console</a></small>
+                </div>
+
+                <div class="input-group">
+                    <label for="openaiKey">OpenAI API Key <span class="api-status untested" id="openaiStatus">未テスト</span></label>
+                    <input type="password" id="openaiKey" placeholder="OpenAI APIキーを入力してください">
+                    <small>取得先: <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI Platform</a></small>
+                </div>
+
+                <button class="btn btn-primary" onclick="testChatAPIs()">🧪 チャットAPI接続テスト</button>
+            </div>
+
+            <!-- Vision API Tab -->
+            <div class="tab-content" id="vision-tab">
+                <h3>Vision & Live Analysis API設定</h3>
+                
+                <div class="input-group">
+                    <label for="geminiVisionKey">Gemini API Key (画像分析用) <span class="api-status untested" id="geminiVisionStatus">未テスト</span></label>
+                    <input type="password" id="geminiVisionKey" placeholder="Gemini APIキーを入力してください">
+                    <small>Google AI Studioで取得（チャット用と同じでもOK）</small>
+                </div>
+
+                <div class="input-group">
+                    <label for="visionKey">Google Vision API Key <span class="api-status untested" id="visionApiStatus">未テスト</span></label>
+                    <input type="password" id="visionKey" placeholder="Google Vision APIキーを入力してください">
+                    <small>取得先: Google Cloud Console → APIs & Services → Credentials</small>
+                </div>
+
+                <div class="input-group">
+                    <label for="translateKey">Google Translate API Key <span class="api-status untested" id="translateStatus">未テスト</span></label>
+                    <input type="password" id="translateKey" placeholder="Google Translate APIキーを入力してください">
+                    <small>通常はVision API Keyと同じ</small>
+                </div>
+
+                <div class="input-group">
+                    <label for="ttsKey">Text-to-Speech API Key <span class="api-status untested" id="ttsStatus">未テスト</span></label>
+                    <input type="password" id="ttsKey" placeholder="Google TTS APIキーを入力してください">
+                    <small>通常はVision API Keyと同じ</small>
+                </div>
+
+                <button class="btn btn-primary" onclick="testVisionAPIs()">🧪 Vision API接続テスト</button>
+            </div>
+
+            <!-- Analysis Settings Tab -->
+            <div class="tab-content" id="analysis-tab">
+                <h3>Live Vision Analysis 設定</h3>
+                
+                <div class="input-group">
+                    <label for="analysisMode">分析モード</label>
+                    <select id="analysisMode">
+                        <option value="general">物体名のみ（簡潔）</option>
+                        <option value="detailed">詳細分析</option>
+                        <option value="objects">物体検出重視</option>
+                        <option value="text">文字認識重視</option>
+                        <option value="scene">シーン理解</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label for="customInstruction">カスタム指示（オプション）</label>
+                    <textarea id="customInstruction" rows="3" placeholder="特別な分析指示があれば入力してください..."></textarea>
+                </div>
+
+                <div class="input-group">
+                    <label for="speechSpeed">音声速度</label>
+                    <select id="speechSpeed">
+                        <option value="0.7">遅め</option>
+                        <option value="1.0" selected>標準</option>
+                        <option value="1.3">速め</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label>
+                        <input type="checkbox" id="autoSpeech"> 分析結果を自動で音声読み上げ
+                    </label>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 20px;">
+                <button class="btn btn-success" onclick="saveSettings()">💾 設定を保存</button>
+                <button class="btn btn-warning" onclick="loadSettings()">🔄 設定を読み込み</button>
+                <button class="btn btn-danger" onclick="resetSettings()">🗑️ 設定をリセット</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Modal -->
+    <div class="modal-overlay" id="analyticsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📊 使用統計</h2>
+                <button class="btn btn-danger" onclick="closeAnalytics()">✕</button>
+            </div>
+            
+            <div class="analytics-panel">
+                <div class="analytics-grid">
+                    <div class="analytics-item">
+                        <div class="analytics-value" id="totalAnalyses">0</div>
+                        <div class="analytics-label">総分析回数</div>
+                    </div>
+                    <div class="analytics-item">
+                        <div class="analytics-value" id="successRate">0%</div>
+                        <div class="analytics-label">成功率</div>
+                    </div>
+                    <div class="analytics-item">
+                        <div class="analytics-value" id="totalCost">$0.00</div>
+                        <div class="analytics-label">推定コスト（USD）</div>
+                    </div>
+                    <div class="analytics-item">
+                        <div class="analytics-value" id="avgTime">0.0s</div>
+                        <div class="analytics-label">平均処理時間</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Config check - APIキー関連のコメントを安全に修正
+        let CONFIG_AVAILABLE = false;
+        try {
+            if (typeof CONFIG !== 'undefined' && CONFIG.GEMINI_API_KEY) {
+                CONFIG_AVAILABLE = true;
+            }
+        } catch (error) {
+            console.warn('Config file not found');
+        }
+
+        // Show error if config is not available
+        if (!CONFIG_AVAILABLE) {
+            document.getElementById('configError').classList.remove('hidden');
+            // Create dummy CONFIG to prevent errors
+            window.CONFIG = {
+                GEMINI_API_KEY: '',
+                OPENAI_API_KEY: '',
+                CLAUDE_API_KEY: '',
+                GOOGLE_VISION_API_KEY: '',
+                GOOGLE_TRANSLATE_API_KEY: '',
+                GOOGLE_TTS_API_KEY: ''
+            };
+        }
+
+        // System state
+        let isVisionActive = false;
+        let speechEnabled = false;
+        let currentMode = 'general';
+        let stream = null;
+        let analysisInterval = null;
+        let conversationHistory = [];
+        let lastAnalysisTime = 0;
+        let isProcessing = false;
+        let currentAudio = null;
+
+        // Analytics
+        let analytics = {
+            total: 0,
+            successful: 0,
+            totalProcessingTime: 0,
+            estimatedCost: 0
+        };
+
+        // Default instructions (Japanese prompts) - 在庫管理を削除
+        const defaultInstructions = {
+            general: "この画像に写っている主要な物体を簡潔に日本語で列挙してください。詳しい説明は不要です。",
+            detailed: "この画像について、物体、人、活動、設定、色、注目すべき詳細を含めて包括的に分析してください。",
+            objects: "この画像に見える全ての物体を特定し、おおよその位置と共にリストアップしてください。",
+            text: "この画像に表示されているテキスト、看板、ラベル、文字を全て読み取って転写してください。",
+            scene: "このシーンを分析してください：何が起こっているのか？文脈は？状況について何が推測できるか？"
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            setupTabs();
+            
+            // カメラ利用可能性をチェック
+            checkCameraAvailability();
+            
+            // Load config values if available
+            if (CONFIG_AVAILABLE) {
+                loadConfigValues();
+            }
+            
+            loadSettings();
+            checkAPIStatus();
+        });
+
+        // カメラ利用可能性チェック
+        async function checkCameraAvailability() {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('このブラウザはカメラアクセスをサポートしていません');
+                }
+
+                // 利用可能なデバイスを確認
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length === 0) {
+                    throw new Error('カメラデバイスが見つかりません');
+                }
+
+                console.log(`${videoDevices.length} 個のカメラデバイスが見つかりました:`, videoDevices);
+                document.getElementById('statusOverlay').textContent = `📹 Camera Ready (${videoDevices.length}台)`;
+                
+            } catch (error) {
+                console.error('Camera availability check failed:', error);
+                document.getElementById('statusOverlay').textContent = `❌ ${error.message}`;
+                document.getElementById('statusIndicator').textContent = 'カメラ利用不可';
+                document.getElementById('statusIndicator').className = 'status-indicator status-error';
+                
+                // Vision toggleボタンを無効化
+                document.getElementById('visionToggle').disabled = true;
+                document.getElementById('visionToggle').textContent = '❌ カメラ無し';
+            }
+        }
+
+        // Load values from config.js into settings
+        function loadConfigValues() {
+            // config.js からの値読み込み - 実際のAPIキーは含めない
+            if (typeof CONFIG !== 'undefined') {
+                if (CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY !== "YOUR_GEMINI_API_KEY_HERE") {
+                    document.getElementById('geminiChatKey').value = CONFIG.GEMINI_API_KEY;
+                    document.getElementById('geminiVisionKey').value = CONFIG.GEMINI_API_KEY;
+                }
+                if (CONFIG.OPENAI_API_KEY && CONFIG.OPENAI_API_KEY !== "YOUR_OPENAI_API_KEY_HERE") {
+                    document.getElementById('openaiKey').value = CONFIG.OPENAI_API_KEY;
+                }
+                if (CONFIG.CLAUDE_API_KEY && CONFIG.CLAUDE_API_KEY !== "YOUR_CLAUDE_API_KEY_HERE") {
+                    document.getElementById('claudeKey').value = CONFIG.CLAUDE_API_KEY;
+                }
+                if (CONFIG.GOOGLE_VISION_API_KEY && CONFIG.GOOGLE_VISION_API_KEY !== "YOUR_GOOGLE_VISION_API_KEY_HERE") {
+                    document.getElementById('visionKey').value = CONFIG.GOOGLE_VISION_API_KEY;
+                }
+                if (CONFIG.GOOGLE_TRANSLATE_API_KEY && CONFIG.GOOGLE_TRANSLATE_API_KEY !== "YOUR_GOOGLE_TRANSLATE_API_KEY_HERE") {
+                    document.getElementById('translateKey').value = CONFIG.GOOGLE_TRANSLATE_API_KEY;
+                }
+                if (CONFIG.GOOGLE_TTS_API_KEY && CONFIG.GOOGLE_TTS_API_KEY !== "YOUR_GOOGLE_TTS_API_KEY_HERE") {
+                    document.getElementById('ttsKey').value = CONFIG.GOOGLE_TTS_API_KEY;
+                }
+            }
+        }
+
+        // Settings management
+        function setupTabs() {
+            // Vision mode tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', function() {
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    this.classList.add('active');
+                    currentMode = this.dataset.mode || 'general';
+                });
+            });
+
+            // Modal tabs
+            document.querySelectorAll('.modal-tab').forEach(tab => {
+                tab.addEventListener('click', function() {
+                    const targetTab = this.dataset.tab;
+                    
+                    document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    this.classList.add('active');
+                    document.getElementById(targetTab + '-tab').classList.add('active');
+                });
+            });
+        }
+
+        function openSettings() {
+            document.getElementById('settingsModal').style.display = 'flex';
+            
+            // 設定画面を開いたときにカメラ状況も表示
+            showCameraInfo();
+        }
+
+        // カメラ情報を表示
+        async function showCameraInfo() {
+            try {
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                    
+                    console.log('カメラデバイス情報:', videoDevices);
+                    
+                    // HTTPSかどうかチェック
+                    const isHTTPS = location.protocol === 'https:';
+                    const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+                    
+                    if (!isHTTPS && !isLocalhost) {
+                        console.warn('カメラアクセスにはHTTPS接続が必要です');
+                        addChatMessage('system', '⚠️ カメラアクセスにはHTTPS接続が必要です。GitHub Pagesまたはローカルサーバーでテストしてください。');
+                    }
+                }
+            } catch (error) {
+                console.error('カメラ情報取得エラー:', error);
+            }
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').style.display = 'none';
+        }
+
+        function showAnalytics() {
+            updateAnalyticsDisplay();
+            document.getElementById('analyticsModal').style.display = 'flex';
+        }
+
+        function closeAnalytics() {
+            document.getElementById('analyticsModal').style.display = 'none';
+        }
+
+        function saveSettings() {
+            const settings = {
+                geminiChatKey: document.getElementById('geminiChatKey').value,
+                claudeKey: document.getElementById('claudeKey').value,
+                openaiKey: document.getElementById('openaiKey').value,
+                geminiVisionKey: document.getElementById('geminiVisionKey').value,
+                visionKey: document.getElementById('visionKey').value,
+                translateKey: document.getElementById('translateKey').value,
+                ttsKey: document.getElementById('ttsKey').value,
+                analysisMode: document.getElementById('analysisMode').value,
+                customInstruction: document.getElementById('customInstruction').value,
+                speechSpeed: document.getElementById('speechSpeed').value,
+                autoSpeech: document.getElementById('autoSpeech').checked
+            };
+
+            localStorage.setItem('aiVisionSettings', JSON.stringify(settings));
+            addChatMessage('system', '⚙️ 設定が保存されました');
+            checkAPIStatus();
+        }
+
+        function loadSettings() {
+            const saved = localStorage.getItem('aiVisionSettings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                
+                // Only load if not already loaded from config
+                if (!CONFIG_AVAILABLE) {
+                    document.getElementById('geminiChatKey').value = settings.geminiChatKey || '';
+                    document.getElementById('claudeKey').value = settings.claudeKey || '';
+                    document.getElementById('openaiKey').value = settings.openaiKey || '';
+                    document.getElementById('geminiVisionKey').value = settings.geminiVisionKey || '';
+                    document.getElementById('visionKey').value = settings.visionKey || '';
+                    document.getElementById('translateKey').value = settings.translateKey || '';
+                    document.getElementById('ttsKey').value = settings.ttsKey || '';
+                }
+                
+                document.getElementById('analysisMode').value = settings.analysisMode || 'general';
+                document.getElementById('customInstruction').value = settings.customInstruction || '';
+                document.getElementById('speechSpeed').value = settings.speechSpeed || '1.0';
+                document.getElementById('autoSpeech').checked = settings.autoSpeech || false;
+
+                addChatMessage('system', '🔄 設定が読み込まれました');
+                checkAPIStatus();
+            }
+        }
+
+        function resetSettings() {
+            if (confirm('全ての設定をリセットしますか？')) {
+                localStorage.removeItem('aiVisionSettings');
+                document.querySelectorAll('#settingsModal input, #settingsModal select, #settingsModal textarea').forEach(input => {
+                    if (input.type === 'checkbox') {
+                        input.checked = false;
+                    } else {
+                        input.value = '';
+                    }
+                });
+                
+                // Reload config values if available
+                if (CONFIG_AVAILABLE) {
+                    loadConfigValues();
+                }
+                
+                addChatMessage('system', '🗑️ 設定がリセットされました');
+                checkAPIStatus();
+            }
+        }
+
+        function checkAPIStatus() {
+            const geminiChat = document.getElementById('geminiChatKey').value.trim();
+            const geminiVision = document.getElementById('geminiVisionKey').value.trim();
+            const vision = document.getElementById('visionKey').value.trim();
+            const translate = document.getElementById('translateKey').value.trim();
+            const tts = document.getElementById('ttsKey').value.trim();
+
+            // Enable/disable UI based on API key availability
+            const hasChatAPI = geminiChat || document.getElementById('claudeKey').value.trim() || document.getElementById('openaiKey').value.trim();
+            const hasVisionAPI = geminiVision && vision;
+            const hasFullVisionAPI = hasVisionAPI && translate && tts;
+
+            // Update UI states
+            document.getElementById('chatInput').disabled = !hasChatAPI;
+            document.getElementById('sendBtn').disabled = !hasChatAPI;
+            document.getElementById('visionToggle').disabled = !hasVisionAPI;
+            document.getElementById('shareBtn').disabled = !hasVisionAPI;
+            document.getElementById('snapshotBtn').disabled = !hasVisionAPI;
+            document.getElementById('speechBtn').disabled = !tts;
+            document.getElementById('intervalSelect').disabled = !hasVisionAPI;
+
+            // Update placeholders and messages
+            if (hasChatAPI) {
+                document.getElementById('chatInput').placeholder = 'AIと会話してみましょう...';
+            } else {
+                document.getElementById('chatInput').placeholder = 'APIキーを設定後、AIと会話できます...';
+            }
+
+            // Update status messages
+            if (hasFullVisionAPI) {
+                document.getElementById('statusIndicator').textContent = '準備完了';
+                document.getElementById('statusIndicator').className = 'status-indicator';
+                document.getElementById('visionResults').textContent = 'カメラを開始してください...';
+                document.getElementById('analysisResults').textContent = '分析結果がここに表示されます...';
+                document.getElementById('translationResults').textContent = '翻訳結果がここに表示されます...';
+                document.getElementById('speechResults').textContent = '音声再生の状況がここに表示されます...';
+            } else if (hasVisionAPI) {
+                document.getElementById('statusIndicator').textContent = '一部API未設定';
+                document.getElementById('statusIndicator').className = 'status-indicator status-processing';
+                if (!translate) document.getElementById('translationResults').textContent = 'Translate APIキーを設定してください...';
+                if (!tts) document.getElementById('speechResults').textContent = 'Text-to-Speech APIキーを設定してください...';
+            } else {
+                document.getElementById('statusIndicator').textContent = '設定が必要';
+                document.getElementById('statusIndicator').className = 'status-indicator status-error';
+                if (!geminiVision) document.getElementById('analysisResults').textContent = 'Gemini APIキーを設定してください...';
+                if (!vision) document.getElementById('visionResults').textContent = 'Vision APIキーを設定してください...';
+                if (!translate) document.getElementById('translationResults').textContent = 'Translate APIキーを設定してください...';
+                if (!tts) document.getElementById('speechResults').textContent = 'Text-to-Speech APIキーを設定してください...';
+            }
+
+            // Update chat message if status changed
+            updateChatStatusMessage(hasChatAPI, hasVisionAPI);
+        }
+
+        function updateChatStatusMessage(hasChatAPI, hasVisionAPI) {
+            const statusMessage = document.getElementById('statusMessage');
+            
+            let message = '';
+            if (hasChatAPI && hasVisionAPI) {
+                message = '✅ システム準備完了！チャットとLive Vision Analysisが利用可能です。';
+            } else if (hasChatAPI) {
+                message = '⚠️ チャット機能のみ利用可能。Vision機能を使用するにはVision APIキーの設定が必要です。';
+            } else if (hasVisionAPI) {
+                message = '⚠️ Vision機能のみ利用可能。チャットを使用するにはチャット用APIキーの設定が必要です。';
+            } else {
+                message = '❌ APIキーの設定が必要です。⚙️設定ボタンから設定してください。';
+            }
+            
+            statusMessage.textContent = message;
+        }
+
+        // API Testing functions (same as original)
+        async function testChatAPIs() {
+            const geminiKey = document.getElementById('geminiChatKey').value.trim();
+            if (geminiKey) {
+                updateAPIStatus('geminiChatStatus', 'testing', 'テスト中...');
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${geminiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: 'Hello' }] }],
+                            generationConfig: { maxOutputTokens: 10 }
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        updateAPIStatus('geminiChatStatus', 'connected', '接続OK');
+                    } else {
+                        updateAPIStatus('geminiChatStatus', 'disconnected', `エラー: ${response.status}`);
+                    }
+                } catch (error) {
+                    updateAPIStatus('geminiChatStatus', 'disconnected', 'ネットワークエラー');
+                }
+            } else {
+                updateAPIStatus('geminiChatStatus', 'untested', '未設定');
+            }
+
+            const claudeKey = document.getElementById('claudeKey').value.trim();
+            if (claudeKey) {
+                updateAPIStatus('claudeStatus', 'untested', 'サーバー実装必要');
+            } else {
+                updateAPIStatus('claudeStatus', 'untested', '未設定');
+            }
+
+            const openaiKey = document.getElementById('openaiKey').value.trim();
+            if (openaiKey) {
+                updateAPIStatus('openaiStatus', 'untested', 'サーバー実装必要');
+            } else {
+                updateAPIStatus('openaiStatus', 'untested', '未設定');
+            }
+
+            checkAPIStatus();
+        }
+
+        async function testVisionAPIs() {
+            const testImage = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+
+            // Test Gemini Vision API
+            const geminiVisionKey = document.getElementById('geminiVisionKey').value.trim();
+            if (geminiVisionKey) {
+                updateAPIStatus('geminiVisionStatus', 'testing', 'テスト中...');
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${geminiVisionKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: "この画像に何が写っていますか？" },
+                                    { inline_data: { mime_type: 'image/jpeg', data: testImage.split(',')[1] } }
+                                ]
+                            }]
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateAPIStatus('geminiVisionStatus', 'connected', '接続OK');
+                        console.log('Gemini Vision API test successful:', data);
+                    } else {
+                        const errorText = await response.text();
+                        updateAPIStatus('geminiVisionStatus', 'disconnected', `エラー: ${response.status}`);
+                        console.error('Gemini Vision API error:', response.status, errorText);
+                    }
+                } catch (error) {
+                    updateAPIStatus('geminiVisionStatus', 'disconnected', `ネットワークエラー: ${error.message}`);
+                    console.error('Gemini Vision API network error:', error);
+                }
+            } else {
+                updateAPIStatus('geminiVisionStatus', 'untested', '未設定');
+            }
+
+            // Test Google Vision API
+            const visionKey = document.getElementById('visionKey').value.trim();
+            if (visionKey) {
+                updateAPIStatus('visionApiStatus', 'testing', 'テスト中...');
+                try {
+                    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${visionKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            requests: [{
+                                image: { content: testImage.split(',')[1] },
+                                features: [{ type: 'LABEL_DETECTION', maxResults: 1 }]
+                            }]
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateAPIStatus('visionApiStatus', 'connected', '接続OK');
+                        console.log('Google Vision API test successful:', data);
+                    } else {
+                        const errorText = await response.text();
+                        updateAPIStatus('visionApiStatus', 'disconnected', `エラー: ${response.status}`);
+                        console.error('Google Vision API error:', response.status, errorText);
+                    }
+                } catch (error) {
+                    updateAPIStatus('visionApiStatus', 'disconnected', `ネットワークエラー: ${error.message}`);
+                    console.error('Google Vision API network error:', error);
+                }
+            } else {
+                updateAPIStatus('visionApiStatus', 'untested', '未設定');
+            }
+
+            // Test Google Translate API
+            const translateKey = document.getElementById('translateKey').value.trim();
+            if (translateKey) {
+                updateAPIStatus('translateStatus', 'testing', 'テスト中...');
+                try {
+                    const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${translateKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            q: 'Hello',
+                            target: 'ja',
+                            source: 'en'
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        updateAPIStatus('translateStatus', 'connected', '接続OK');
+                    } else {
+                        updateAPIStatus('translateStatus', 'disconnected', `エラー: ${response.status}`);
+                    }
+                } catch (error) {
+                    updateAPIStatus('translateStatus', 'disconnected', 'ネットワークエラー');
+                }
+            } else {
+                updateAPIStatus('translateStatus', 'untested', '未設定');
+            }
+
+            // Test Text-to-Speech API
+            const ttsKey = document.getElementById('ttsKey').value.trim();
+            if (ttsKey) {
+                updateAPIStatus('ttsStatus', 'testing', 'テスト中...');
+                try {
+                    const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${ttsKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            input: { text: "テスト" },
+                            voice: {
+                                languageCode: 'ja-JP',
+                                name: 'ja-JP-Standard-A'
+                            },
+                            audioConfig: {
+                                audioEncoding: 'MP3'
+                            }
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        updateAPIStatus('ttsStatus', 'connected', '接続OK');
+                    } else {
+                        updateAPIStatus('ttsStatus', 'disconnected', `エラー: ${response.status}`);
+                    }
+                } catch (error) {
+                    updateAPIStatus('ttsStatus', 'disconnected', 'ネットワークエラー');
+                }
+            } else {
+                updateAPIStatus('ttsStatus', 'untested', '未設定');
+            }
+
+            checkAPIStatus();
+        }
+
+        function updateAPIStatus(elementId, status, text) {
+            const element = document.getElementById(elementId);
+            if (element) {
+                element.className = `api-status ${status}`;
+                element.textContent = text;
+                
+                // ログにも出力（デバッグ用）
+                console.log(`API Status Update - ${elementId}: ${status} - ${text}`);
+            }
+        }
+
+        // Rest of the functions from original file
+        function cleanMarkdown(text) {
+            if (!text || typeof text !== 'string') return text || '';
+            
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '$1')
+                .replace(/\*(.*?)\*/g, '$1')
+                .replace(/^\* /gm, '• ')
+                .replace(/^\d+\. /gm, '')
+                .replace(/^#+\s*/gm, '')
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/`([^`]+)`/g, '$1')
+                .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+                .replace(/\n\s*\n/g, '\n')
+                .trim();
+        }
+
+        // Chat Functions
+        function handleChatKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addChatMessage('user', message);
+            input.value = '';
+            
+            conversationHistory.push({ role: 'user', content: message });
+            showTypingIndicator();
+            
+            try {
+                const response = await getAIResponse(message);
+                hideTypingIndicator();
+                addChatMessage('assistant', response);
+                conversationHistory.push({ role: 'assistant', content: response });
+                
+                if (conversationHistory.length > 20) {
+                    conversationHistory = conversationHistory.slice(-20);
+                }
+                
+            } catch (error) {
+                hideTypingIndicator();
+                addChatMessage('system', `AI応答エラー: ${error.message}`);
+            }
+        }
+
+        async function getAIResponse(message) {
+            const provider = document.getElementById('aiProvider').value;
+            
+            let contextMessage = message;
+            if (isVisionActive) {
+                const visionContext = getVisionContext();
+                contextMessage = `${message}\n\n[現在の画像分析コンテキスト: ${visionContext}]`;
+            }
+            
+            switch (provider) {
+                case 'gemini':
+                    return await callGeminiChat(contextMessage);
+                case 'claude':
+                    return await callClaudeAPI(contextMessage);
+                case 'gpt':
+                    return await callOpenAIAPI(contextMessage);
+                default:
+                    return simulateAIResponse(contextMessage);
+            }
+        }
+
+        async function callGeminiChat(message) {
+            const apiKey = document.getElementById('geminiChatKey').value.trim();
+            
+            if (!apiKey) {
+                return simulateAIResponse(message);
+            }
+            
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{ text: message }]
+                    }],
+                    generationConfig: {
+                        maxOutputTokens: 1000,
+                        temperature: 0.7
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Gemini API error: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        // Rest of the original functions...
+        async function callClaudeAPI(message) {
+            return simulateAIResponse(message);
+        }
+
+        async function callOpenAIAPI(message) {
+            return simulateAIResponse(message);
+        }
+
+        function simulateAIResponse(message) {
+            const lowerMessage = message.toLowerCase();
+            
+            if (lowerMessage.includes('画像') || lowerMessage.includes('分析') || lowerMessage.includes('見え')) {
+                if (!isVisionActive) {
+                    return 'Live Vision Analysisを開始すると、リアルタイムで画像分析ができます。右側の「🚀 開始」ボタンを押してカメラを有効にしてください。';
+                } else {
+                    const visionContext = getVisionContext();
+                    return `現在の画像分析結果をお伝えします：${visionContext}。さらに詳しい分析や特定の部分について質問があればお聞かせください。`;
+                }
+            }
+            
+            if (lowerMessage.includes('設定') || lowerMessage.includes('API')) {
+                return '⚙️設定ボタンからAPIキーの設定や分析モードの変更ができます。何か特定の設定についてお困りですか？';
+            }
+            
+            const responses = [
+                'ご質問ありがとうございます。Live Vision Analysisシステムでサポートいたします。',
+                'AI画像分析と統合チャットでお手伝いします。具体的にどのようなサポートが必要でしょうか？',
+                'リアルタイム画像分析の結果も参考にしながらお答えします。他にもご質問があればどうぞ。',
+                'Live Vision Analysisが提供する詳細な画像情報を活用してサポートいたします。'
+            ];
+            
+            return responses[Math.floor(Math.random() * responses.length)];
+        }
+
+        function getVisionContext() {
+            if (!isVisionActive) return '画像分析は停止中';
+            
+            const visionResults = document.getElementById('visionResults').textContent;
+            const analysisResults = document.getElementById('analysisResults').textContent;
+            
+            return `物体検出: ${visionResults.slice(0, 100)}, AI分析: ${analysisResults.slice(0, 100)}`;
+        }
+
+        function addChatMessage(type, content) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            if (type === 'assistant') {
+                messageDiv.innerHTML = formatMessageContent(content);
+            } else {
+                messageDiv.textContent = content;
+            }
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function formatMessageContent(content) {
+            return content
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\n/g, '<br>')
+                .replace(/`(.*?)`/g, '<code style="background: #f0f0f0; padding: 2px 4px; border-radius: 3px;">$1</code>');
+        }
+
+        function showTypingIndicator() {
+            document.getElementById('typingIndicator').style.display = 'block';
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            document.getElementById('typingIndicator').style.display = 'none';
+        }
+
+        // Vision Analysis Functions (improved camera handling)
+        async function toggleVision() {
+            const btn = document.getElementById('visionToggle');
+            
+            if (!isVisionActive) {
+                try {
+                    updateStatus('📹 カメラを起動中...');
+                    
+                    // より詳細なカメラ設定とエラーハンドリング
+                    const constraints = {
+                        video: {
+                            width: { ideal: 640, max: 1280 },
+                            height: { ideal: 480, max: 720 },
+                            facingMode: 'environment' // 背面カメラを優先（スマホ用）
+                        }
+                    };
+                    
+                    // タイムアウト付きでカメラアクセス
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('カメラアクセスがタイムアウトしました')), 10000);
+                    });
+                    
+                    const mediaPromise = navigator.mediaDevices.getUserMedia(constraints);
+                    
+                    stream = await Promise.race([mediaPromise, timeoutPromise]);
+                    
+                    const video = document.getElementById('videoFeed');
+                    video.srcObject = stream;
+                    
+                    // ビデオが再生準備完了まで待機
+                    await new Promise((resolve, reject) => {
+                        video.onloadedmetadata = () => {
+                            video.play().then(resolve).catch(reject);
+                        };
+                        video.onerror = () => reject(new Error('ビデオ再生エラー'));
+                        setTimeout(() => reject(new Error('ビデオ読み込みタイムアウト')), 5000);
+                    });
+                    
+                    isVisionActive = true;
+                    btn.textContent = '⏹️ 停止';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-danger');
+                    
+                    updateStatus('🚀 Live Vision Analysis 開始');
+                    addChatMessage('system', 'Live Vision Analysis が開始されました');
+                    
+                    startAnalysis();
+                    
+                } catch (error) {
+                    console.error('Camera error:', error);
+                    updateStatus('❌ カメラエラー');
+                    
+                    // より具体的なエラーメッセージ
+                    let errorMessage = 'カメラエラー: ';
+                    if (error.name === 'NotAllowedError') {
+                        errorMessage += 'カメラアクセスが拒否されました。ブラウザの設定でカメラを許可してください。';
+                    } else if (error.name === 'NotFoundError') {
+                        errorMessage += 'カメラが見つかりません。デバイスにカメラが接続されているか確認してください。';
+                    } else if (error.name === 'NotReadableError') {
+                        errorMessage += 'カメラが他のアプリケーションで使用中です。';
+                    } else if (error.message.includes('タイムアウト')) {
+                        errorMessage += 'カメラの起動に時間がかかりすぎました。再試行してください。';
+                    } else {
+                        errorMessage += error.message;
+                    }
+                    
+                    addChatMessage('system', errorMessage);
+                    
+                    // フォールバック: より基本的な設定で再試行
+                    if (!error.message.includes('タイムアウト') && !error.name === 'NotAllowedError') {
+                        setTimeout(() => {
+                            tryBasicCamera();
+                        }, 2000);
+                    }
+                }
+            } else {
+                stopVision();
+            }
+        }
+
+        // フォールバック用の基本カメラ設定
+        async function tryBasicCamera() {
+            try {
+                updateStatus('📹 基本設定でカメラを再試行中...');
+                addChatMessage('system', '基本設定でカメラアクセスを再試行しています...');
+                
+                // より基本的な設定
+                const basicConstraints = {
+                    video: true // 最も基本的な設定
+                };
+                
+                stream = await navigator.mediaDevices.getUserMedia(basicConstraints);
+                const video = document.getElementById('videoFeed');
+                video.srcObject = stream;
+                
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play().then(resolve);
+                    };
+                });
+                
+                isVisionActive = true;
+                const btn = document.getElementById('visionToggle');
+                btn.textContent = '⏹️ 停止';
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-danger');
+                
+                updateStatus('🚀 Live Vision Analysis 開始');
+                addChatMessage('system', '✅ カメラが正常に起動しました（基本設定）');
+                
+                startAnalysis();
+                
+            } catch (fallbackError) {
+                console.error('Fallback camera error:', fallbackError);
+                updateStatus('❌ カメラ利用不可');
+                addChatMessage('system', `❌ カメラアクセスに失敗しました: ${fallbackError.message}`);
+            }
+        }
+
+        function stopVision() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            if (analysisInterval) {
+                clearInterval(analysisInterval);
+                analysisInterval = null;
+            }
+            
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+            
+            isVisionActive = false;
+            isProcessing = false;
+            const btn = document.getElementById('visionToggle');
+            btn.textContent = '🚀 開始';
+            btn.classList.remove('btn-danger');
+            btn.classList.add('btn-primary');
+            
+            updateStatus('⏹️ Live Vision Analysis 停止');
+            addChatMessage('system', 'Live Vision Analysis が停止されました');
+        }
+
+        function startAnalysis() {
+            lastAnalysisTime = 0;
+            performAnalysis();
+            
+            const interval = parseInt(document.getElementById('intervalSelect').value);
+            analysisInterval = setInterval(performAnalysis, interval);
+        }
+
+        async function performAnalysis() {
+            if (!isVisionActive || isProcessing) return;
+
+            const now = Date.now();
+            const interval = parseInt(document.getElementById('intervalSelect').value);
+            const timeSinceLastAnalysis = now - lastAnalysisTime;
+            
+            if (lastAnalysisTime > 0 && timeSinceLastAnalysis < interval - 100) {
+                updateStatus(`⏳ 待機中 (${Math.round((interval - timeSinceLastAnalysis) / 1000)}s)`);
+                return;
+            }
+
+            isProcessing = true;
+            lastAnalysisTime = now;
+            const startTime = Date.now();
+            updateStatus('🔄 分析中...');
+
+            try {
+                const imageBase64 = captureFrame();
+                if (!imageBase64) {
+                    throw new Error('画像キャプチャに失敗');
+                }
+
+                let visionData = null;
+                let analysisText = '';
+                let translationText = '';
+
+                // Step 1: Vision API Analysis
+                const visionKey = document.getElementById('visionKey').value.trim();
+                if (visionKey) {
+                    try {
+                        visionData = await analyzeWithVision(imageBase64);
+                        const labels = visionData.labelAnnotations?.map(l => `${l.description} (${Math.round(l.score * 100)}%)`).join(', ') || 'None';
+                        const objects = visionData.localizedObjectAnnotations?.map(o => o.name).join(', ') || 'None';
+                        const texts = visionData.textAnnotations?.[0]?.description || 'None';
+                        
+                        document.getElementById('visionResults').textContent = `Labels: ${labels}\nObjects: ${objects}\nText: ${texts}`;
+                    } catch (error) {
+                        document.getElementById('visionResults').textContent = `Error: ${error.message}`;
+                    }
+                }
+
+                // Step 2: Gemini Analysis
+                const geminiKey = document.getElementById('geminiVisionKey').value.trim();
+                if (geminiKey) {
+                    try {
+                        const instruction = document.getElementById('customInstruction').value.trim() || 
+                                          defaultInstructions[document.getElementById('analysisMode').value];
+                        
+                        const rawText = await analyzeWithGemini(imageBase64, instruction);
+                        analysisText = cleanMarkdown(rawText);
+                        document.getElementById('analysisResults').textContent = analysisText;
+                    } catch (error) {
+                        if (visionData && visionData.labelAnnotations) {
+                            analysisText = `検出: ${visionData.labelAnnotations.slice(0, 3).map(l => l.description).join(', ')}`;
+                            document.getElementById('analysisResults').textContent = `[フォールバック] ${analysisText}`;
+                        } else {
+                            document.getElementById('analysisResults').textContent = `Error: ${error.message}`;
+                        }
+                    }
+                }
+
+                // Step 3: Translation
+                const translateKey = document.getElementById('translateKey').value.trim();
+                if (translateKey && analysisText) {
+                    try {
+                        translationText = await translateText(analysisText);
+                        document.getElementById('translationResults').textContent = translationText;
+                    } catch (error) {
+                        document.getElementById('translationResults').textContent = `Translation error: ${error.message}`;
+                    }
+                }
+
+                // Step 4: Speech
+                if (document.getElementById('autoSpeech').checked && translationText && !translationText.includes('error')) {
+                    await speakText(translationText);
+                }
+
+                // Update analytics
+                const processingTime = (Date.now() - startTime) / 1000;
+                analytics.total++;
+                if (analysisText && !analysisText.includes('Error')) {
+                    analytics.successful++;
+                }
+                analytics.totalProcessingTime += processingTime;
+                analytics.estimatedCost += calculateCost(visionData, analysisText, translationText);
+
+                updateStatus(`✅ 分析完了 ${processingTime.toFixed(1)}s`);
+
+            } catch (error) {
+                console.error('Analysis error:', error);
+                updateStatus(`❌ エラー: ${error.message}`);
+                analytics.total++;
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        function captureFrame() {
+            const video = document.getElementById('videoFeed');
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            
+            return canvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        // API Functions (keeping original implementation)
+        async function analyzeWithVision(imageBase64) {
+            const apiKey = document.getElementById('visionKey').value.trim();
+            const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requests: [{
+                        image: { content: imageBase64.split(',')[1] },
+                        features: [
+                            { type: 'LABEL_DETECTION', maxResults: 10 },
+                            { type: 'OBJECT_LOCALIZATION', maxResults: 10 },
+                            { type: 'TEXT_DETECTION', maxResults: 1 }
+                        ]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Vision API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.responses[0];
+        }
+
+        async function analyzeWithGemini(imageBase64, instruction) {
+            const apiKey = document.getElementById('geminiVisionKey').value.trim();
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: instruction },
+                            { inline_data: { mime_type: 'image/jpeg', data: imageBase64.split(',')[1] } }
+                        ]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Gemini API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        async function translateText(text) {
+            const apiKey = document.getElementById('translateKey').value.trim();
+            const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    q: text,
+                    target: 'ja',
+                    source: 'en'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Translate API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.data.translations[0].translatedText;
+        }
+
+        async function speakText(text) {
+            const apiKey = document.getElementById('ttsKey').value.trim();
+            if (!apiKey || !text) return;
+
+            try {
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                }
+
+                const cleanText = cleanMarkdown(text);
+                const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        input: { text: cleanText },
+                        voice: {
+                            languageCode: 'ja-JP',
+                            name: 'ja-JP-Standard-A',
+                            ssmlGender: 'FEMALE'
+                        },
+                        audioConfig: {
+                            audioEncoding: 'MP3',
+                            speakingRate: parseFloat(document.getElementById('speechSpeed').value)
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`TTS API error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const audioBlob = new Blob([Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0))], {
+                    type: 'audio/mp3'
+                });
+                
+                const audioUrl = URL.createObjectURL(audioBlob);
+                currentAudio = new Audio(audioUrl);
+                
+                currentAudio.onended = () => {
+                    URL.revokeObjectURL(audioUrl);
+                    currentAudio = null;
+                };
+                
+                await currentAudio.play();
+                document.getElementById('speechResults').textContent = `音声再生中: ${cleanText.substring(0, 50)}...`;
+            } catch (error) {
+                document.getElementById('speechResults').textContent = `音声エラー: ${error.message}`;
+            }
+        }
+
+        // Utility Functions
+        function captureAndSend() {
+            if (!isVisionActive) {
+                addChatMessage('system', 'Live Vision Analysisを開始してから画像を共有してください');
+                return;
+            }
+            
+            const visionResults = document.getElementById('visionResults').textContent;
+            const analysisResults = document.getElementById('analysisResults').textContent;
+            const translationResults = document.getElementById('translationResults').textContent;
+            
+            const imageContext = `📷 **Live Vision Analysis結果を共有しました**\n\n🔍 **物体検出**: ${visionResults}\n🤖 **AI分析**: ${analysisResults}\n🌐 **翻訳**: ${translationResults}`;
+            
+            addChatMessage('system', imageContext);
+            
+            conversationHistory.push({
+                role: 'user',
+                content: `[Live Vision Analysis結果] 検出: ${visionResults}, 分析: ${analysisResults}`
+            });
+            
+            setTimeout(async () => {
+                try {
+                    const response = await getAIResponse('この画像分析結果について詳しく教えてください。');
+                    addChatMessage('assistant', response);
+                    conversationHistory.push({ role: 'assistant', content: response });
+                } catch (error) {
+                    addChatMessage('assistant', 'Live Vision Analysis結果を確認しました。この情報を基にサポートを続けさせていただきます。');
+                }
+            }, 1500);
+        }
+
+        function toggleSpeech() {
+            speechEnabled = !speechEnabled;
+            const btn = document.getElementById('speechBtn');
+            
+            if (speechEnabled) {
+                btn.textContent = '🔊 音声ON';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-warning');
+            } else {
+                btn.textContent = '🔇 音声OFF';
+                btn.classList.remove('btn-warning');
+                btn.classList.add('btn-success');
+            }
+        }
+
+        function takeSnapshot() {
+            if (!isVisionActive) {
+                addChatMessage('system', 'Live Vision Analysisを開始してからスナップショットを撮影してください');
+                return;
+            }
+            
+            const imageData = captureFrame();
+            addChatMessage('system', '📸 スナップショットを撮影しました');
+            
+            // In real implementation, this would save or process the image
+            console.log('Snapshot captured:', imageData.substring(0, 50) + '...');
+        }
+
+        function updateStatus(message) {
+            document.getElementById('statusIndicator').textContent = message;
+            document.getElementById('statusOverlay').textContent = message;
+        }
+
+        function calculateCost(visionData, analysisText, translationText) {
+            let cost = 0;
+            
+            if (visionData) {
+                cost += 0.0015; // Vision API: $1.50 per 1000 images
+            }
+            
+            if (analysisText) {
+                const estimatedTokens = 258 + 50 + 100; // Image + input + output tokens
+                cost += (estimatedTokens / 1000000) * 7; // Gemini: $7 per 1M tokens
+            }
+            
+            if (translationText) {
+                const chars = analysisText?.length || 0;
+                cost += (chars / 1000000) * 20; // Translate: $20 per 1M chars
+            }
+            
+            if (translationText && document.getElementById('autoSpeech').checked) {
+                const chars = translationText.length;
+                cost += (chars / 1000000) * 4; // TTS: $4 per 1M chars
+            }
+            
+            return cost;
+        }
+
+        function updateAnalyticsDisplay() {
+            document.getElementById('totalAnalyses').textContent = analytics.total;
+            document.getElementById('successRate').textContent = analytics.total > 0 ? 
+                `${Math.round((analytics.successful / analytics.total) * 100)}%` : '0%';
+            document.getElementById('totalCost').textContent = `${analytics.estimatedCost.toFixed(4)}`;
+            document.getElementById('avgTime').textContent = analytics.total > 0 ? 
+                `${(analytics.totalProcessingTime / analytics.total).toFixed(1)}s` : '0.0s';
+        }
+    </script>
+</body>
+</html>

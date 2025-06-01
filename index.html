@@ -710,10 +710,19 @@
     <!-- APIキー設定ファイルを読み込み -->
     <script src="config.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
+        /* Ensure proper layering and prevent code leakage */
+        html {
+            background: #667eea;
+            overflow-x: hidden;
+        }
+        
+        *, *::before, *::after {
             box-sizing: border-box;
+        }
+        
+        /* Hide any potential script content */
+        script {
+            display: none !important;
         }
 
         body {
@@ -721,6 +730,19 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
+            overflow-x: hidden;
+        }
+
+        /* Prevent code from showing in background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            z-index: -1;
         }
 
         .main-container {
@@ -729,6 +751,9 @@
             max-width: 1400px;
             margin: 0 auto;
             height: calc(100vh - 40px);
+            position: relative;
+            z-index: 1;
+            background: transparent;
         }
 
         /* Header */

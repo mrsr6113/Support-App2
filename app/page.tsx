@@ -177,6 +177,11 @@ export default function AIVisionChat() {
         }
       } catch (error) {
         console.error("API設定チェックエラー:", error)
+        setApiStatus({
+          gemini: false,
+          tts: false,
+          message: "❌ API設定の確認に失敗しました。サーバー接続を確認してください。",
+        })
         addMessage("system", "❌ API設定の確認に失敗しました。")
       }
     }
@@ -405,7 +410,7 @@ export default function AIVisionChat() {
 
       if (captureMode === "screen") {
         if (!capabilities.screenShare) {
-          throw new Error("画面共有がサポートされていません。")
+          throw new Error("画面共有がサポートされていません。カメラモードを選択してください。")
         }
 
         try {
@@ -415,19 +420,12 @@ export default function AIVisionChat() {
           console.error("Screen share error:", error)
 
           if (error.name === "NotAllowedError") {
-            addMessage("system", "⚠️ 画面共有が拒否されました。")
-
-            if (capabilities.camera) {
-              addMessage("system", "💡 カメラモードに切り替えて再試行します...")
-              setCaptureMode("camera")
-              mediaStream = await startCamera()
-              addMessage("system", "✅ カメラモードで開始しました。")
-            } else {
-              throw new Error("画面共有が拒否され、カメラも利用できません。")
-            }
+            addMessage("system", "⚠️ 画面共有が拒否されました。ブラウザで画面共有を許可してから再試行してください。")
+            throw new Error("画面共有が拒否されました。")
           } else if (error.name === "NotSupportedError") {
             throw new Error("このブラウザでは画面共有がサポートされていません。")
           } else if (error.name === "AbortError") {
+            addMessage("system", "⚠️ 画面共有がキャンセルされました。")
             throw new Error("画面共有がキャンセルされました。")
           } else {
             throw new Error(`画面共有エラー: ${error.message}`)
@@ -473,8 +471,9 @@ export default function AIVisionChat() {
       console.error("キャプチャ開始エラー:", error)
       addMessage("system", `❌ ${error instanceof Error ? error.message : "キャプチャの開始に失敗しました。"}`)
 
-      if (captureMode === "screen" && capabilities.camera) {
-        addMessage("system", "💡 カメラモードをお試しください。")
+      // No automatic fallback - user must manually select camera mode
+      if (captureMode === "screen") {
+        addMessage("system", "💡 画面共有に問題がある場合は、カメラモードを手動で選択してください。")
       }
     }
   }

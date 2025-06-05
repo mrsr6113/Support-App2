@@ -26,14 +26,18 @@ import {
   MessageSquare,
   Eye,
   Info,
+  Headphones,
+  Settings,
 } from "lucide-react"
 
 interface ChatMessage {
   id: string
-  type: "user" | "ai" | "system"
+  type: "user" | "ai" | "system" | "voice"
   content: string
   timestamp: Date
   isPeriodicAnalysis?: boolean
+  isVoiceInput?: boolean
+  hasImage?: boolean
 }
 
 interface SpeechRecognition extends EventTarget {
@@ -45,6 +49,7 @@ interface SpeechRecognition extends EventTarget {
   onresult: (event: any) => void
   onerror: (event: any) => void
   onend: () => void
+  onstart: () => void
 }
 
 declare global {
@@ -64,8 +69,12 @@ export default function AIVisionChat() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isSendingChat, setIsSendingChat] = useState(false)
   const [isTTSEnabled, setIsTTSEnabled] = useState(true)
+  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [voiceLanguage, setVoiceLanguage] = useState("ja-JP")
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [stream, setStream] = useState<MediaStream | null>(null)
+  const [interimTranscript, setInterimTranscript] = useState("")
+  const [voiceConfidence, setVoiceConfidence] = useState(0)
   const [capabilities, setCapabilities] = useState({
     camera: false,
     screenShare: false,
@@ -111,7 +120,7 @@ export default function AIVisionChat() {
         console.log("Camera not supported:", error)
       }
 
-      // 画面共有の確認 - より確実な方法
+      // 画面共有の確認
       try {
         if (
           navigator.mediaDevices &&
@@ -142,6 +151,9 @@ export default function AIVisionChat() {
 
       if (availableFeatures.length > 0) {
         addMessage("system", `✅ 利用可能な機能: ${availableFeatures.join(", ")}`)
+        if (caps.speechRecognition) {
+          addMessage("system", "🎤 音声入力モードを有効にして、声で操作を開始できます。")
+        }
       } else {
         addMessage("system", "⚠️ メディア機能が制限されています。")
       }
@@ -177,42 +189,91 @@ export default function AIVisionChat() {
     if (capabilities.speechRecognition) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       const recognition = new SpeechRecognition()
-      recognition.continuous = false
-      recognition.interimResults = false
-      recognition.lang = "ja-JP"
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = voiceLanguage
+
+      recognition.onstart = () => {
+        setIsListening(true)
+        addMessage("system", "🎤 音声認識を開始しました。話しかけてください。")
+      }
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript
-        setChatMessage(transcript)
-        addMessage("user", `音声入力: ${transcript}`)
+        let interimTranscript = ""
+        let finalTranscript = ""
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          const confidence = event.results[i][0].confidence
+
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+            setVoiceConfidence(confidence || 0)
+          } else {
+            interimTranscript += transcript
+          }
+        }
+
+        setInterimTranscript(interimTranscript)
+
+        if (finalTranscript) {
+          handleVoiceInput(finalTranscript.trim())
+          setInterimTranscript("")
+        }
       }
 
       recognition.onerror = (event) => {
         console.error("音声認識エラー:", event.error)
         setIsListening(false)
+        setInterimTranscript("")
+
         if (event.error === "not-allowed") {
           addMessage("system", "❌ 音声認識の許可が必要です。ブラウザの設定を確認してください。")
+        } else if (event.error === "no-speech") {
+          addMessage("system", "⚠️ 音声が検出されませんでした。もう一度お試しください。")
+        } else {
+          addMessage("system", `❌ 音声認識エラー: ${event.error}`)
         }
       }
 
       recognition.onend = () => {
         setIsListening(false)
+        setInterimTranscript("")
+        if (isVoiceMode) {
+          // 音声モードが有効な場合は自動的に再開
+          setTimeout(() => {
+            if (isVoiceMode && !isListening) {
+              recognition.start()
+            }
+          }, 1000)
+        }
       }
 
       recognitionRef.current = recognition
     }
-  }, [capabilities.speechRecognition])
+  }, [capabilities.speechRecognition, voiceLanguage, isVoiceMode])
 
-  const addMessage = useCallback((type: "user" | "ai" | "system", content: string, isPeriodicAnalysis = false) => {
-    const newMessage: ChatMessage = {
-      id: `${Date.now()}-${Math.random()}`,
-      type,
-      content,
-      timestamp: new Date(),
-      isPeriodicAnalysis,
-    }
-    setMessages((prev) => [...prev, newMessage])
-  }, [])
+  const addMessage = useCallback(
+    (
+      type: "user" | "ai" | "system" | "voice",
+      content: string,
+      isPeriodicAnalysis = false,
+      isVoiceInput = false,
+      hasImage = false,
+    ) => {
+      const newMessage: ChatMessage = {
+        id: `${Date.now()}-${Math.random()}`,
+        type,
+        content,
+        timestamp: new Date(),
+        isPeriodicAnalysis,
+        isVoiceInput,
+        hasImage,
+      }
+      setMessages((prev) => [...prev, newMessage])
+    },
+    [],
+  )
 
   const stopCurrentAudio = () => {
     if (currentAudioRef.current) {
@@ -222,9 +283,89 @@ export default function AIVisionChat() {
     }
   }
 
-  // 画面共有を開始する関数 - ユーザージェスチャーから直接呼び出される
+  // 音声入力の処理
+  const handleVoiceInput = async (transcript: string) => {
+    addMessage("voice", transcript, false, true)
+
+    // 音声コマンドの解析
+    const lowerTranscript = transcript.toLowerCase()
+
+    if (
+      lowerTranscript.includes("画面共有") ||
+      lowerTranscript.includes("スクリーン") ||
+      lowerTranscript.includes("画面を共有")
+    ) {
+      addMessage("system", "🖥️ 画面共有を開始します...")
+      setCaptureMode("screen")
+      setTimeout(() => startCapture(), 1000)
+    } else if (lowerTranscript.includes("カメラ") || lowerTranscript.includes("カメラを開始")) {
+      addMessage("system", "📷 カメラを開始します...")
+      setCaptureMode("camera")
+      setTimeout(() => startCapture(), 1000)
+    } else if (lowerTranscript.includes("停止") || lowerTranscript.includes("止めて")) {
+      addMessage("system", "⏹️ キャプチャを停止します...")
+      stopCapture()
+    } else if (lowerTranscript.includes("音声モード終了") || lowerTranscript.includes("音声を止めて")) {
+      toggleVoiceMode()
+    } else {
+      // 通常のチャットメッセージとして処理
+      await sendVoiceMessage(transcript)
+    }
+  }
+
+  // 音声メッセージの送信
+  const sendVoiceMessage = async (message: string) => {
+    if (isSendingChat) return
+
+    setIsSendingChat(true)
+
+    try {
+      // 現在のフレームをキャプチャ（利用可能な場合）
+      const base64Data = await captureCurrentFrame()
+
+      const requestBody: any = {
+        prompt: message,
+        mimeType: "image/jpeg",
+      }
+
+      if (base64Data) {
+        requestBody.image = base64Data
+        addMessage("system", "📸 音声入力と現在の画像を一緒に送信中...")
+      } else {
+        addMessage("system", "💬 音声入力を送信中...")
+      }
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        addMessage("ai", result.response, false, false, !!base64Data)
+
+        // 音声で読み上げ（TTSが有効な場合）
+        if (result.response && isTTSEnabled) {
+          speakText(result.response)
+        }
+      } else {
+        addMessage("system", `❌ チャットエラー: ${result.error}`)
+        console.error("Chat error:", result.error)
+      }
+    } catch (error) {
+      console.error("音声チャット送信エラー:", error)
+      addMessage("system", `❌ 音声チャット送信エラー: ${error instanceof Error ? error.message : "不明なエラー"}`)
+    } finally {
+      setIsSendingChat(false)
+    }
+  }
+
+  // 画面共有を開始する関数
   const startScreenShare = async (): Promise<MediaStream> => {
-    // getDisplayMediaを直接呼び出し、ユーザージェスチャーチェーンを維持
     const mediaStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         width: { ideal: 1920 },
@@ -234,7 +375,6 @@ export default function AIVisionChat() {
       audio: false,
     })
 
-    // 画面共有が停止された場合のハンドリング
     mediaStream.getVideoTracks()[0].addEventListener("ended", () => {
       addMessage("system", "画面共有が停止されました。")
       stopCapture()
@@ -269,17 +409,14 @@ export default function AIVisionChat() {
         }
 
         try {
-          // 画面共有を直接開始 - ユーザージェスチャーから直接呼び出し
           mediaStream = await startScreenShare()
           addMessage("system", "✅ 画面共有を開始しました。")
         } catch (error: any) {
           console.error("Screen share error:", error)
 
-          // エラーの種類に応じて処理
           if (error.name === "NotAllowedError") {
             addMessage("system", "⚠️ 画面共有が拒否されました。")
 
-            // カメラが利用可能な場合は自動フォールバック
             if (capabilities.camera) {
               addMessage("system", "💡 カメラモードに切り替えて再試行します...")
               setCaptureMode("camera")
@@ -297,7 +434,6 @@ export default function AIVisionChat() {
           }
         }
       } else {
-        // カメラモード
         if (!capabilities.camera) {
           throw new Error("カメラがサポートされていません。")
         }
@@ -316,7 +452,6 @@ export default function AIVisionChat() {
         }
       }
 
-      // ストリームの設定
       setStream(mediaStream)
 
       if (videoRef.current) {
@@ -325,7 +460,7 @@ export default function AIVisionChat() {
       }
 
       setIsCapturing(true)
-      addMessage("system", `${frequency}秒間隔で画像解析を開始します。リアルタイムチャットも利用可能です。`)
+      addMessage("system", `${frequency}秒間隔で画像解析を開始します。音声コマンドも利用可能です。`)
 
       // 最初のキャプチャを実行
       setTimeout(() => captureAndAnalyze(), 2000)
@@ -338,7 +473,6 @@ export default function AIVisionChat() {
       console.error("キャプチャ開始エラー:", error)
       addMessage("system", `❌ ${error instanceof Error ? error.message : "キャプチャの開始に失敗しました。"}`)
 
-      // 失敗時の提案
       if (captureMode === "screen" && capabilities.camera) {
         addMessage("system", "💡 カメラモードをお試しください。")
       }
@@ -346,7 +480,6 @@ export default function AIVisionChat() {
   }
 
   const stopCapture = () => {
-    // 音声再生を停止
     stopCurrentAudio()
 
     if (intervalRef.current) {
@@ -376,7 +509,6 @@ export default function AIVisionChat() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return null
 
-    // ビデオが準備できているかチェック
     if (videoRef.current.readyState < 2) {
       return null
     }
@@ -390,7 +522,6 @@ export default function AIVisionChat() {
 
     ctx.drawImage(videoRef.current, 0, 0)
 
-    // Canvas を高品質のJPEGに変換
     const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9)
     const base64Data = imageDataUrl.split(",")[1]
 
@@ -429,7 +560,6 @@ export default function AIVisionChat() {
       if (result.success) {
         addMessage("ai", `[定期解析] ${result.analysis}`, true)
 
-        // 音声で読み上げ（TTSが有効な場合）
         if (result.analysis && isTTSEnabled) {
           speakText(result.analysis)
         }
@@ -455,10 +585,8 @@ export default function AIVisionChat() {
     setIsSendingChat(true)
 
     try {
-      // ユーザーメッセージを追加
       addMessage("user", userMessage)
 
-      // 現在のフレームをキャプチャ（利用可能な場合）
       const base64Data = await captureCurrentFrame()
 
       const requestBody: any = {
@@ -484,9 +612,8 @@ export default function AIVisionChat() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("ai", result.response)
+        addMessage("ai", result.response, false, false, !!base64Data)
 
-        // 音声で読み上げ（TTSが有効な場合）
         if (result.response && isTTSEnabled) {
           speakText(result.response)
         }
@@ -504,7 +631,6 @@ export default function AIVisionChat() {
 
   const speakText = async (text: string) => {
     try {
-      // 現在の音声を停止
       stopCurrentAudio()
 
       const response = await fetch("/api/text-to-speech", {
@@ -539,6 +665,28 @@ export default function AIVisionChat() {
     }
   }
 
+  const toggleVoiceMode = () => {
+    if (!recognitionRef.current) {
+      addMessage("system", "❌ 音声認識がサポートされていません。")
+      return
+    }
+
+    if (isVoiceMode) {
+      setIsVoiceMode(false)
+      if (isListening) {
+        recognitionRef.current.stop()
+      }
+      addMessage("system", "🔇 音声モードを終了しました。")
+    } else {
+      setIsVoiceMode(true)
+      recognitionRef.current.start()
+      addMessage(
+        "system",
+        "🎤 音声モードを開始しました。「画面共有」「カメラ」「停止」などの音声コマンドが利用できます。",
+      )
+    }
+  }
+
   const toggleListening = () => {
     if (!recognitionRef.current) {
       addMessage("system", "❌ 音声認識がサポートされていません。")
@@ -549,7 +697,6 @@ export default function AIVisionChat() {
       recognitionRef.current.stop()
     } else {
       recognitionRef.current.start()
-      setIsListening(true)
     }
   }
 
@@ -610,6 +757,49 @@ export default function AIVisionChat() {
               </AlertDescription>
             </Alert>
 
+            {/* 音声モード状態 */}
+            {capabilities.speechRecognition && (
+              <Alert>
+                <Headphones className="h-4 w-4" />
+                <AlertDescription>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">
+                      音声モード: {isVoiceMode ? "有効" : "無効"}
+                      {isListening && " (聞き取り中...)"}
+                    </span>
+                    <Button variant={isVoiceMode ? "destructive" : "outline"} size="sm" onClick={toggleVoiceMode}>
+                      {isVoiceMode ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                    </Button>
+                  </div>
+                  {interimTranscript && (
+                    <div className="mt-2 p-2 bg-blue-50 rounded text-xs">認識中: "{interimTranscript}"</div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* 音声設定 */}
+            {capabilities.speechRecognition && (
+              <div>
+                <Label className="text-base font-medium flex items-center gap-2">
+                  <Settings className="w-4 h-4" />
+                  音声設定
+                </Label>
+                <Select value={voiceLanguage} onValueChange={setVoiceLanguage}>
+                  <SelectTrigger className="mt-2">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ja-JP">日本語</SelectItem>
+                    <SelectItem value="en-US">English (US)</SelectItem>
+                    <SelectItem value="en-GB">English (UK)</SelectItem>
+                    <SelectItem value="zh-CN">中文 (简体)</SelectItem>
+                    <SelectItem value="ko-KR">한국어</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* 機能サポート状況 */}
             <Alert>
               <Info className="h-4 w-4" />
@@ -636,10 +826,9 @@ export default function AIVisionChat() {
                       </span>
                     </div>
                   </div>
-                  {captureMode === "screen" && capabilities.screenShare && (
+                  {capabilities.speechRecognition && (
                     <div className="mt-2 p-2 bg-blue-50 rounded text-xs">
-                      💡 画面共有:
-                      開始ボタンを押すとブラウザのポップアップが表示されます。共有したい画面を選択してください。
+                      💡 音声コマンド: 「画面共有」「カメラ」「停止」「音声モード終了」
                     </div>
                   )}
                 </div>
@@ -768,6 +957,12 @@ export default function AIVisionChat() {
                   {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
                 </div>
               )}
+              {isVoiceMode && (
+                <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
+                  <Mic className="w-3 h-3" />
+                  音声モード
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -785,24 +980,37 @@ export default function AIVisionChat() {
             <ScrollArea className="flex-1 pr-4 mb-4">
               <div className="space-y-4">
                 {messages.map((message) => (
-                  <div key={message.id} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    key={message.id}
+                    className={`flex ${message.type === "user" || message.type === "voice" ? "justify-end" : "justify-start"}`}
+                  >
                     <div
                       className={`max-w-[80%] p-3 rounded-lg ${
                         message.type === "user"
                           ? "bg-blue-500 text-white"
-                          : message.type === "system"
-                            ? "bg-gray-100 text-gray-700 border"
-                            : message.isPeriodicAnalysis
-                              ? "bg-purple-100 text-purple-800 border border-purple-200"
-                              : "bg-green-100 text-green-800"
+                          : message.type === "voice"
+                            ? "bg-purple-500 text-white"
+                            : message.type === "system"
+                              ? "bg-gray-100 text-gray-700 border"
+                              : message.isPeriodicAnalysis
+                                ? "bg-purple-100 text-purple-800 border border-purple-200"
+                                : "bg-green-100 text-green-800"
                       }`}
                     >
                       <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                       <div className="flex items-center justify-between mt-1">
                         <p className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</p>
-                        {message.isPeriodicAnalysis && (
-                          <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">定期解析</span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {message.isVoiceInput && (
+                            <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">音声入力</span>
+                          )}
+                          {message.isPeriodicAnalysis && (
+                            <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">定期解析</span>
+                          )}
+                          {message.hasImage && (
+                            <span className="text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">画像付き</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

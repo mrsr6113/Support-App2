@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     // リクエストボディを構築
     const parts: any[] = [
       {
-        text: `${prompt}\n\n日本語で自然に回答してください。`,
+        text: `${prompt}\n\n日本語で自然に回答してください。音声での質問の場合は、簡潔で分かりやすい回答を心がけてください。`,
       },
     ]
 

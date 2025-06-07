@@ -18,6 +18,20 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Get the language from headers or default to Japanese
+    const language = request.headers.get("X-Language-Code") || "ja-JP"
+    const languageCode = language.split("-")[0] || "ja"
+
+    // Determine system prompt based on language
+    let systemPrompt = "日本語で簡潔に回答してください。"
+    if (languageCode === "en") {
+      systemPrompt = "Please respond concisely in English."
+    } else if (languageCode === "zh") {
+      systemPrompt = "请用中文简洁回答。"
+    } else if (languageCode === "ko") {
+      systemPrompt = "한국어로 간결하게 대답해 주세요."
+    }
+
     // Gemini Vision API呼び出し
     const geminiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -31,7 +45,7 @@ export async function POST(request: NextRequest) {
             {
               parts: [
                 {
-                  text: `${prompt}\n\n日本語で簡潔に回答してください。`,
+                  text: `${prompt}\n\n${systemPrompt}`,
                 },
                 {
                   inline_data: {

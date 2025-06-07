@@ -63,7 +63,7 @@ export default function AIVisionChat() {
   const [captureMode, setCaptureMode] = useState<"camera" | "screen">("camera")
   const [periodicPrompt, setPeriodicPrompt] = useState("この画像に何が写っていますか？")
   const [chatMessage, setChatMessage] = useState("")
-  const [frequency, setFrequency] = useState("10")
+  const [frequency, setFrequency] = useState("0")
   const [isCapturing, setIsCapturing] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -71,6 +71,7 @@ export default function AIVisionChat() {
   const [isTTSEnabled, setIsTTSEnabled] = useState(true)
   const [isVoiceMode, setIsVoiceMode] = useState(false)
   const [voiceLanguage, setVoiceLanguage] = useState("ja-JP")
+  const [interfaceLanguage, setInterfaceLanguage] = useState("ja")
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [interimTranscript, setInterimTranscript] = useState("")
@@ -152,7 +153,7 @@ export default function AIVisionChat() {
       if (availableFeatures.length > 0) {
         addMessage("system", `✅ 利用可能な機能: ${availableFeatures.join(", ")}`)
         if (caps.speechRecognition) {
-          addMessage("system", "🎤 音声入力モードを有効にして、声で操作を開始できます。")
+          addMessage("system", "🎤 音声入力を有効にして、声で操作を開始できます。")
         }
       } else {
         addMessage("system", "⚠️ メディア機能が制限されています。")
@@ -245,7 +246,7 @@ export default function AIVisionChat() {
         setIsListening(false)
         setInterimTranscript("")
         if (isVoiceMode) {
-          // 音声モードが有効な場合は自動的に再開
+          // 音声入力が有効な場合は自動的に再開
           setTimeout(() => {
             if (isVoiceMode && !isListening) {
               recognition.start()
@@ -310,7 +311,7 @@ export default function AIVisionChat() {
     } else if (lowerTranscript.includes("停止") || lowerTranscript.includes("止めて")) {
       addMessage("system", "⏹️ キャプチャを停止します...")
       stopCapture()
-    } else if (lowerTranscript.includes("音声モード終了") || lowerTranscript.includes("音声を止めて")) {
+    } else if (lowerTranscript.includes("音声入力終了") || lowerTranscript.includes("音声を止めて")) {
       toggleVoiceMode()
     } else {
       // 通常のチャットメッセージとして処理
@@ -344,6 +345,7 @@ export default function AIVisionChat() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Language-Code": voiceLanguage,
         },
         body: JSON.stringify(requestBody),
       })
@@ -458,15 +460,23 @@ export default function AIVisionChat() {
       }
 
       setIsCapturing(true)
-      addMessage("system", `${frequency}秒間隔で画像解析を開始します。音声コマンドも利用可能です。`)
+      // 定期的にキャプチャを実行（頻度が0より大きい場合のみ）
+      if (Number.parseFloat(frequency) > 0) {
+        // 最初のキャプチャを実行
+        setTimeout(() => captureAndAnalyze(), 2000)
 
-      // 最初のキャプチャを実行
-      setTimeout(() => captureAndAnalyze(), 2000)
+        // 定期的にキャプチャを実行
+        intervalRef.current = setInterval(() => {
+          captureAndAnalyze()
+        }, Number.parseFloat(frequency) * 1000)
 
-      // 定期的にキャプチャを実行
-      intervalRef.current = setInterval(() => {
-        captureAndAnalyze()
-      }, Number.parseInt(frequency) * 1000)
+        addMessage(
+          "system",
+          getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace("{frequency}", frequency),
+        )
+      } else {
+        addMessage("system", getLocalizedText("noPeriodicAnalysis", interfaceLanguage))
+      }
     } catch (error) {
       console.error("キャプチャ開始エラー:", error)
       addMessage("system", `❌ ${error instanceof Error ? error.message : "キャプチャの開始に失敗しました。"}`)
@@ -546,6 +556,7 @@ export default function AIVisionChat() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Language-Code": voiceLanguage,
         },
         body: JSON.stringify({
           image: base64Data,
@@ -604,6 +615,7 @@ export default function AIVisionChat() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Language-Code": voiceLanguage,
         },
         body: JSON.stringify(requestBody),
       })
@@ -634,7 +646,10 @@ export default function AIVisionChat() {
 
       const response = await fetch("/api/text-to-speech", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Language-Code": voiceLanguage,
+        },
         body: JSON.stringify({ text }),
       })
 
@@ -675,13 +690,13 @@ export default function AIVisionChat() {
       if (isListening) {
         recognitionRef.current.stop()
       }
-      addMessage("system", "🔇 音声モードを終了しました。")
+      addMessage("system", "🔇 音声入力を終了しました。")
     } else {
       setIsVoiceMode(true)
       recognitionRef.current.start()
       addMessage(
         "system",
-        "🎤 音声モードを開始しました。「画面共有」「カメラ」「停止」などの音声コマンドが利用できます。",
+        "🎤 音声入力を開始しました。「画面共有」「カメラ」「停止」などの音声コマンドが利用できます。",
       )
     }
   }
@@ -731,6 +746,116 @@ export default function AIVisionChat() {
     setCaptureMode(value)
   }
 
+  // Localization function
+  const getLocalizedText = (key: string, lang: string) => {
+    const translations: Record<string, Record<string, string>> = {
+      periodicAnalysisStarted: {
+        ja: "{frequency}秒間隔で画像解析を開始します。音声コマンドも利用可能です。",
+        en: "Starting image analysis at {frequency} second intervals. Voice commands are also available.",
+        zh: "开始每{frequency}秒进行一次图像分析。语音命令也可用。",
+        ko: "{frequency}초 간격으로 이미지 분석을 시작합니다. 음성 명령도 사용 가능합니다.",
+      },
+      noPeriodicAnalysis: {
+        ja: "定期解析なしで開始しました。手動で解析を実行できます。",
+        en: "Started without periodic analysis. You can run analysis manually.",
+        zh: "已开始，无定期分析。您可以手动运行分析。",
+        ko: "정기 분석 없이 시작되었습니다. 수동으로 분석을 실행할 수 있습니다.",
+      },
+      realTimeChat: {
+        ja: "リアルタイムチャット",
+        en: "Real-time Chat",
+        zh: "实时聊天",
+        ko: "실시간 채팅",
+      },
+      enterMessage: {
+        ja: "メッセージを入力してください... (Enterで送信、Shift+Enterで改行)",
+        en: "Enter your message... (Enter to send, Shift+Enter for new line)",
+        zh: "输入您的消息... (按Enter发送，Shift+Enter换行)",
+        ko: "메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)",
+      },
+      sending: {
+        ja: "送信中...",
+        en: "Sending...",
+        zh: "发送中...",
+        ko: "전송 중...",
+      },
+      processing: {
+        ja: "処理中...",
+        en: "Processing...",
+        zh: "处理中...",
+        ko: "처리 중...",
+      },
+      analyzeNow: {
+        ja: "今すぐ解析",
+        en: "Analyze Now",
+        zh: "立即分析",
+        ko: "지금 분석",
+      },
+      stop: {
+        ja: "停止",
+        en: "Stop",
+        zh: "停止",
+        ko: "중지",
+      },
+      start: {
+        ja: "開始",
+        en: "Start",
+        zh: "开始",
+        ko: "시작",
+      },
+      camera: {
+        ja: "カメラ",
+        en: "Camera",
+        zh: "相机",
+        ko: "카메라",
+      },
+      screenShare: {
+        ja: "画面共有",
+        en: "Screen Share",
+        zh: "屏幕共享",
+        ko: "화면 공유",
+      },
+      captureMode: {
+        ja: "キャプチャモード",
+        en: "Capture Mode",
+        zh: "捕获模式",
+        ko: "캡처 모드",
+      },
+      periodicPrompt: {
+        ja: "定期解析プロンプト",
+        en: "Periodic Analysis Prompt",
+        zh: "定期分析提示",
+        ko: "정기 분석 프롬프트",
+      },
+      captureFrequency: {
+        ja: "キャプチャ頻度",
+        en: "Capture Frequency",
+        zh: "捕获频率",
+        ko: "캡처 빈도",
+      },
+      languageSettings: {
+        ja: "言語設定",
+        en: "Language Settings",
+        zh: "语言设置",
+        ko: "언어 설정",
+      },
+      noPeriodicAnalysisOption: {
+        ja: "定期解析なし",
+        en: "No periodic analysis",
+        zh: "无定期分析",
+        ko: "정기 분석 없음",
+      },
+      seconds: {
+        ja: "秒",
+        en: "seconds",
+        zh: "秒",
+        ko: "초",
+      },
+    }
+
+    return translations[key]?.[lang] || translations[key]?.["en"] || key
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -756,18 +881,22 @@ export default function AIVisionChat() {
               </AlertDescription>
             </Alert>
 
-            {/* 音声モード状態 */}
+            {/* 音声入力状態 */}
             {capabilities.speechRecognition && (
               <Alert>
                 <Headphones className="h-4 w-4" />
                 <AlertDescription>
                   <div className="flex items-center justify-between">
                     <span className="text-sm">
-                      音声モード: {isVoiceMode ? "有効" : "無効"}
+                      音声入力: {isVoiceMode ? "有効" : "無効"}
                       {isListening && " (聞き取り中...)"}
                     </span>
                     <Button variant={isVoiceMode ? "destructive" : "outline"} size="sm" onClick={toggleVoiceMode}>
-                      {isVoiceMode ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                      {isVoiceMode ? (
+                        <Mic className="w-3 h-3 text-gray-500" />
+                      ) : (
+                        <MicOff className="w-3 h-3 text-red-500" />
+                      )}
                     </Button>
                   </div>
                   {interimTranscript && (
@@ -777,25 +906,48 @@ export default function AIVisionChat() {
               </Alert>
             )}
 
-            {/* 音声設定 */}
+            {/* 言語設定 */}
             {capabilities.speechRecognition && (
               <div>
                 <Label className="text-base font-medium flex items-center gap-2">
                   <Settings className="w-4 h-4" />
-                  音声設定
+                  {getLocalizedText("languageSettings", interfaceLanguage)}
                 </Label>
-                <Select value={voiceLanguage} onValueChange={setVoiceLanguage}>
-                  <SelectTrigger className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ja-JP">日本語</SelectItem>
-                    <SelectItem value="en-US">English (US)</SelectItem>
-                    <SelectItem value="en-GB">English (UK)</SelectItem>
-                    <SelectItem value="zh-CN">中文 (简体)</SelectItem>
-                    <SelectItem value="ko-KR">한국어</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="space-y-2 mt-2">
+                  <Select
+                    value={interfaceLanguage}
+                    onValueChange={(value) => {
+                      setInterfaceLanguage(value)
+                      // Set voice language based on interface language
+                      switch (value) {
+                        case "ja":
+                          setVoiceLanguage("ja-JP")
+                          break
+                        case "en":
+                          setVoiceLanguage("en-US")
+                          break
+                        case "zh":
+                          setVoiceLanguage("zh-CN")
+                          break
+                        case "ko":
+                          setVoiceLanguage("ko-KR")
+                          break
+                        default:
+                          setVoiceLanguage("ja-JP")
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ja">日本語</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                      <SelectItem value="zh">中文</SelectItem>
+                      <SelectItem value="ko">한국어</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )}
 
@@ -827,7 +979,7 @@ export default function AIVisionChat() {
                   </div>
                   {capabilities.speechRecognition && (
                     <div className="mt-2 p-2 bg-blue-50 rounded text-xs">
-                      💡 音声コマンド: 「画面共有」「カメラ」「停止」「音声モード終了」
+                      💡 音声コマンド: 「画面共有」「カメラ」「停止」「音声入力終了」
                     </div>
                   )}
                 </div>
@@ -836,7 +988,7 @@ export default function AIVisionChat() {
 
             {/* キャプチャモード選択 */}
             <div>
-              <Label className="text-base font-medium">キャプチャモード</Label>
+              <Label className="text-base font-medium">{getLocalizedText("captureMode", interfaceLanguage)}</Label>
               <RadioGroup
                 value={captureMode}
                 onValueChange={handleCaptureModeChange}
@@ -850,7 +1002,7 @@ export default function AIVisionChat() {
                     className={`flex items-center gap-2 ${!capabilities.camera ? "opacity-50" : ""}`}
                   >
                     <Camera className="w-4 h-4" />
-                    カメラ
+                    {getLocalizedText("camera", interfaceLanguage)}
                   </Label>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -860,7 +1012,7 @@ export default function AIVisionChat() {
                     className={`flex items-center gap-2 ${!capabilities.screenShare ? "opacity-50" : ""}`}
                   >
                     <Monitor className="w-4 h-4" />
-                    画面共有
+                    {getLocalizedText("screenShare", interfaceLanguage)}
                   </Label>
                 </div>
               </RadioGroup>
@@ -870,7 +1022,7 @@ export default function AIVisionChat() {
             <div>
               <Label htmlFor="periodicPrompt" className="text-base font-medium flex items-center gap-2">
                 <Eye className="w-4 h-4" />
-                定期解析プロンプト
+                {getLocalizedText("periodicPrompt", interfaceLanguage)}
               </Label>
               <Textarea
                 id="periodicPrompt"
@@ -884,15 +1036,20 @@ export default function AIVisionChat() {
 
             {/* キャプチャ頻度 */}
             <div>
-              <Label className="text-base font-medium">キャプチャ頻度</Label>
+              <Label className="text-base font-medium">{getLocalizedText("captureFrequency", interfaceLanguage)}</Label>
               <Select value={frequency} onValueChange={setFrequency} disabled={isCapturing}>
                 <SelectTrigger className="mt-2">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="10">10秒</SelectItem>
-                  <SelectItem value="20">20秒</SelectItem>
-                  <SelectItem value="30">30秒</SelectItem>
+                  <SelectItem value="0">{getLocalizedText("noPeriodicAnalysisOption", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="0.5">0.5 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="1">1 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="3">3 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="5">5 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="10">10 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="20">20 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
+                  <SelectItem value="30">30 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -914,12 +1071,12 @@ export default function AIVisionChat() {
                   {isCapturing ? (
                     <>
                       <Square className="w-4 h-4 mr-2" />
-                      停止
+                      {getLocalizedText("stop", interfaceLanguage)}
                     </>
                   ) : (
                     <>
                       <Play className="w-4 h-4 mr-2" />
-                      開始
+                      {getLocalizedText("start", interfaceLanguage)}
                     </>
                   )}
                 </Button>
@@ -929,9 +1086,11 @@ export default function AIVisionChat() {
                 </Button>
               </div>
 
-              {isCapturing && (
+              {isCapturing && Number.parseFloat(frequency) >= 0 && (
                 <Button onClick={manualCapture} disabled={isProcessing} variant="outline" className="w-full">
-                  {isProcessing ? "処理中..." : "今すぐ解析"}
+                  {isProcessing
+                    ? getLocalizedText("processing", interfaceLanguage)
+                    : getLocalizedText("analyzeNow", interfaceLanguage)}
                 </Button>
               )}
             </div>
@@ -959,7 +1118,7 @@ export default function AIVisionChat() {
               {isVoiceMode && (
                 <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
                   <Mic className="w-3 h-3" />
-                  音声モード
+                  音声入力
                 </div>
               )}
             </div>
@@ -1022,41 +1181,49 @@ export default function AIVisionChat() {
             <div className="border-t pt-4">
               <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
                 <MessageSquare className="w-4 h-4" />
-                リアルタイムチャット
+                {getLocalizedText("realTimeChat", interfaceLanguage)}
               </Label>
               <div className="flex gap-2">
-                <Textarea
-                  id="chatMessage"
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  onKeyPress={handleChatKeyPress}
-                  placeholder="メッセージを入力してください... (Enterで送信、Shift+Enterで改行)"
-                  className="flex-1 min-h-[60px] max-h-[120px]"
-                  disabled={isSendingChat}
-                />
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={sendChatMessage}
-                    disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
-                    size="sm"
-                  >
-                    {isSendingChat ? (
-                      "送信中..."
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant={isListening ? "destructive" : "outline"}
-                    size="sm"
-                    onClick={toggleListening}
-                    disabled={!capabilities.speechRecognition}
-                  >
-                    {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </Button>
+                <div className="relative flex-1">
+                  <Textarea
+                    id="chatMessage"
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    onKeyPress={handleChatKeyPress}
+                    placeholder={getLocalizedText("enterMessage", interfaceLanguage)}
+                    className="flex-1 min-h-[60px] max-h-[120px] pr-10"
+                    disabled={isSendingChat}
+                  />
+                  {capabilities.speechRecognition && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleListening}
+                      disabled={!capabilities.speechRecognition}
+                      className="absolute right-2 bottom-2 h-8 w-8 p-0"
+                    >
+                      {isListening ? (
+                        <Mic className="w-4 h-4 text-gray-500" />
+                      ) : (
+                        <MicOff className="w-4 h-4 text-red-500" />
+                      )}
+                    </Button>
+                  )}
                 </div>
+                <Button
+                  onClick={sendChatMessage}
+                  disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
+                  size="sm"
+                  className="h-auto"
+                >
+                  {isSendingChat ? (
+                    getLocalizedText("sending", interfaceLanguage)
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
           </CardContent>

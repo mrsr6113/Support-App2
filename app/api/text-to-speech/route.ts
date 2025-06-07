@@ -1,5 +1,21 @@
 import { type NextRequest, NextResponse } from "next/server"
 
+function getVoiceName(languageCode: string): string {
+  switch (languageCode) {
+    case "en-US":
+      return "en-US-Standard-B"
+    case "en-GB":
+      return "en-GB-Standard-B"
+    case "zh-CN":
+      return "zh-CN-Standard-B"
+    case "ko-KR":
+      return "ko-KR-Standard-B"
+    case "ja-JP":
+    default:
+      return "ja-JP-Standard-A"
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { text } = await request.json()
@@ -23,8 +39,8 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           input: { text },
           voice: {
-            languageCode: "ja-JP",
-            name: "ja-JP-Standard-A",
+            languageCode: request.headers.get("X-Language-Code") || "ja-JP",
+            name: getVoiceName(request.headers.get("X-Language-Code") || "ja-JP"),
           },
           audioConfig: {
             audioEncoding: "MP3",

@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, image, mimeType } = await request.json()
+    const { prompt, image, mimeType, systemPrompt } = await request.json()
 
     if (!prompt) {
       return NextResponse.json({
@@ -22,21 +22,27 @@ export async function POST(request: NextRequest) {
     const language = request.headers.get("X-Language-Code") || "ja-JP"
     const languageCode = language.split("-")[0] || "ja"
 
-    // Determine system prompt based on language
-    let systemPrompt =
-      "日本語で自然に回答してください。音声での質問の場合は、簡潔で分かりやすい回答を心がけてください。"
-    if (languageCode === "en") {
-      systemPrompt = "Please respond naturally in English. For voice questions, aim for concise and clear answers."
-    } else if (languageCode === "zh") {
-      systemPrompt = "请用中文自然回答。对于语音问题，请尽量简洁明了。"
-    } else if (languageCode === "ko") {
-      systemPrompt = "한국어로 자연스럽게 대답해 주세요. 음성 질문의 경우 간결하고 이해하기 쉬운 답변을 해주세요."
+    // Use provided system prompt or default language-specific prompt
+    let finalSystemPrompt = systemPrompt
+    if (!finalSystemPrompt) {
+      if (languageCode === "en") {
+        finalSystemPrompt =
+          "Please respond naturally in English. For voice questions, aim for concise and clear answers."
+      } else if (languageCode === "zh") {
+        finalSystemPrompt = "请用中文自然回答。对于语音问题，请尽量简洁明了。"
+      } else if (languageCode === "ko") {
+        finalSystemPrompt =
+          "한국어로 자연스럽게 대답해 주세요. 음성 질문의 경우 간결하고 이해하기 쉬운 답변을 해주세요."
+      } else {
+        finalSystemPrompt =
+          "日本語で自然に回答してください。音声での質問の場合は、簡潔で分かりやすい回答を心がけてください。"
+      }
     }
 
     // リクエストボディを構築
     const parts: any[] = [
       {
-        text: `${prompt}\n\n${systemPrompt}`,
+        text: `${prompt}\n\n${finalSystemPrompt}`,
       },
     ]
 

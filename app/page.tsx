@@ -28,6 +28,10 @@ import {
   Info,
   Headphones,
   Settings,
+  FileText,
+  Search,
+  Type,
+  ImageIcon,
 } from "lucide-react"
 
 interface ChatMessage {
@@ -38,6 +42,7 @@ interface ChatMessage {
   isPeriodicAnalysis?: boolean
   isVoiceInput?: boolean
   hasImage?: boolean
+  promptType?: string
 }
 
 interface SpeechRecognition extends EventTarget {
@@ -59,9 +64,68 @@ declare global {
   }
 }
 
+// Visual Analysis Prompt Templates
+const VISUAL_ANALYSIS_PROMPTS = {
+  simple_detection: {
+    name: "簡易物体検知",
+    icon: <Search className="w-4 h-4" />,
+    prompt: "映った物体名を詳細に確認し、商品名などを簡潔に回答してください。",
+    description: "基本的な物体の識別と商品名の特定",
+  },
+  detailed_detection: {
+    name: "物体詳細検知",
+    icon: <Eye className="w-4 h-4" />,
+    prompt:
+      "映った物体名を詳細に確認し、商品名や型番が特定出来たらWebで検索して詳しい特徴などを調べた結果を簡潔に回答してください。",
+    description: "詳細な物体分析と仕様情報の提供",
+  },
+  text_recognition: {
+    name: "文字認識",
+    icon: <Type className="w-4 h-4" />,
+    prompt: "映像に映った内容を正確に文字起こしを行ってください。",
+    description: "画像内のテキストの読み取りと転写",
+  },
+  scene_analysis: {
+    name: "シーン判別",
+    icon: <ImageIcon className="w-4 h-4" />,
+    prompt: "映像に映った内容がどんな状態であるかを詳細に回答してください。",
+    description: "全体的な状況と環境の分析",
+  },
+  custom: {
+    name: "カスタム",
+    icon: <FileText className="w-4 h-4" />,
+    prompt: "",
+    description: "独自のプロンプトを設定",
+  },
+}
+
+// System Prompt (Customer Support Professional)
+const SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッショナルです。現在、ユーザーから音声またはチャットで問い合わせが寄せられています。
+あなたの役割は、丁寧で信頼感のある対応を行い、ユーザーの問題を的確に解決することです。以下の対応方針に従ってください：
+
+【対応方針】
+常に丁寧・安心感のある言葉遣いで対応してください。
+ユーザーが言葉で説明しづらそうな場合や、視覚的なサポートが有効な場面では、次のように提案してください：
+「もしよろしければ、カメラでその対象物を映していただくか、画面を共有していただければ、状況を正確に把握できます。」
+ユーザーがカメラや画面共有を希望した場合は、次のように案内してください：
+「画面右下の📷アイコンをタップするとカメラが起動します。画面共有は🖥マークから開始できます。不明な点があればサポートいたします。」
+映像が共有された場合は、リアルタイムで画像を解析し、問題を特定・解決してください。
+映像だけで判断が難しい場合は、追加で必要な情報や映像の共有を丁寧にお願いしてください。
+「AIにはできません」「画像は扱えません」などの表現は使わず、常にサポートできる姿勢を保ってください。
+
+❌ 回答禁止例：
+「画像は扱えません」
+「画面共有はできません」
+「私はテキストベースのAIです」
+
+例：正しい対応例
+ユーザー： これ、ちょっと見せたいんですけど…
+あなた（AI）： もちろんです。カメラで対象を映していただくか、画面を共有していただければ、より正確にご案内できますよ。方法がわからなければ、操作方法もご案内いたします。`
+
 export default function AIVisionChat() {
   const [captureMode, setCaptureMode] = useState<"camera" | "screen">("camera")
-  const [periodicPrompt, setPeriodicPrompt] = useState("この画像に何が写っていますか？")
+  const [visualAnalysisType, setVisualAnalysisType] = useState<keyof typeof VISUAL_ANALYSIS_PROMPTS>("simple_detection")
+  const [customPrompt, setCustomPrompt] = useState("この画像に何が写っていますか？")
   const [chatMessage, setChatMessage] = useState("")
   const [frequency, setFrequency] = useState("0")
   const [isCapturing, setIsCapturing] = useState(false)
@@ -93,6 +157,14 @@ export default function AIVisionChat() {
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Get current visual analysis prompt
+  const getCurrentVisualPrompt = () => {
+    if (visualAnalysisType === "custom") {
+      return customPrompt
+    }
+    return VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].prompt
+  }
 
   // メッセージを最下部にスクロール
   const scrollToBottom = () => {
@@ -172,7 +244,7 @@ export default function AIVisionChat() {
         setApiStatus(config)
 
         if (config.gemini && config.tts) {
-          addMessage("system", "✅ API設定が完了しました。アプリケーションを使用できます。")
+          addMessage("system", "✅ API設定が完了しました。顧客サポートシステムが利用可能です。")
         } else {
           addMessage("system", `⚠️ ${config.message}`)
         }
@@ -266,6 +338,7 @@ export default function AIVisionChat() {
       isPeriodicAnalysis = false,
       isVoiceInput = false,
       hasImage = false,
+      promptType?: string,
     ) => {
       const newMessage: ChatMessage = {
         id: `${Date.now()}-${Math.random()}`,
@@ -275,6 +348,7 @@ export default function AIVisionChat() {
         isPeriodicAnalysis,
         isVoiceInput,
         hasImage,
+        promptType,
       }
       setMessages((prev) => [...prev, newMessage])
     },
@@ -314,12 +388,12 @@ export default function AIVisionChat() {
     } else if (lowerTranscript.includes("音声入力終了") || lowerTranscript.includes("音声を止めて")) {
       toggleVoiceMode()
     } else {
-      // 通常のチャットメッセージとして処理
+      // 通常のチャットメッセージとして処理（システムプロンプト使用）
       await sendVoiceMessage(transcript)
     }
   }
 
-  // 音声メッセージの送信
+  // 音声メッセージの送信（システムプロンプト使用）
   const sendVoiceMessage = async (message: string) => {
     if (isSendingChat) return
 
@@ -331,6 +405,7 @@ export default function AIVisionChat() {
 
       const requestBody: any = {
         prompt: message,
+        systemPrompt: SYSTEM_PROMPT,
         mimeType: "image/jpeg",
       }
 
@@ -353,7 +428,7 @@ export default function AIVisionChat() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("ai", result.response, false, false, !!base64Data)
+        addMessage("ai", result.response, false, false, !!base64Data, "システムプロンプト")
 
         // 音声で読み上げ（TTSが有効な場合）
         if (result.response && isTTSEnabled) {
@@ -470,9 +545,10 @@ export default function AIVisionChat() {
           captureAndAnalyze()
         }, Number.parseFloat(frequency) * 1000)
 
+        const currentPromptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
         addMessage(
           "system",
-          getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace("{frequency}", frequency),
+          `${getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace("{frequency}", frequency)} (${currentPromptName}モード)`,
         )
       } else {
         addMessage("system", getLocalizedText("noPeriodicAnalysis", interfaceLanguage))
@@ -538,7 +614,8 @@ export default function AIVisionChat() {
   }
 
   const captureAndAnalyze = async () => {
-    if (!periodicPrompt.trim() || isProcessing) {
+    const currentPrompt = getCurrentVisualPrompt()
+    if (!currentPrompt.trim() || isProcessing) {
       return
     }
 
@@ -550,7 +627,8 @@ export default function AIVisionChat() {
         throw new Error("フレームキャプチャに失敗しました")
       }
 
-      addMessage("system", "🔍 定期解析中...", true)
+      const promptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
+      addMessage("system", `🔍 定期解析中... (${promptName})`, true)
 
       const response = await fetch("/api/analyze-image", {
         method: "POST",
@@ -560,7 +638,7 @@ export default function AIVisionChat() {
         },
         body: JSON.stringify({
           image: base64Data,
-          prompt: periodicPrompt,
+          prompt: currentPrompt,
           mimeType: "image/jpeg",
         }),
       })
@@ -568,7 +646,7 @@ export default function AIVisionChat() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("ai", `[定期解析] ${result.analysis}`, true)
+        addMessage("ai", `[${promptName}] ${result.analysis}`, true, false, true, promptName)
 
         if (result.analysis && isTTSEnabled) {
           speakText(result.analysis)
@@ -601,6 +679,7 @@ export default function AIVisionChat() {
 
       const requestBody: any = {
         prompt: userMessage,
+        systemPrompt: SYSTEM_PROMPT,
         mimeType: "image/jpeg",
       }
 
@@ -623,7 +702,7 @@ export default function AIVisionChat() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("ai", result.response, false, false, !!base64Data)
+        addMessage("ai", result.response, false, false, !!base64Data, "システムプロンプト")
 
         if (result.response && isTTSEnabled) {
           speakText(result.response)
@@ -1018,21 +1097,69 @@ export default function AIVisionChat() {
               </RadioGroup>
             </div>
 
-            {/* 定期解析プロンプト */}
+            {/* 画像解析プロンプト選択 */}
             <div>
-              <Label htmlFor="periodicPrompt" className="text-base font-medium flex items-center gap-2">
+              <Label className="text-base font-medium flex items-center gap-2">
                 <Eye className="w-4 h-4" />
-                {getLocalizedText("periodicPrompt", interfaceLanguage)}
+                画像解析プロンプト
               </Label>
-              <Textarea
-                id="periodicPrompt"
-                value={periodicPrompt}
-                onChange={(e) => setPeriodicPrompt(e.target.value)}
-                placeholder="定期的な画像解析で使用するプロンプト..."
-                className="mt-2 min-h-[80px]"
+              <Select
+                value={visualAnalysisType}
+                onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
                 disabled={isCapturing}
-              />
+              >
+                <SelectTrigger className="mt-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
+                    <SelectItem key={key} value={key}>
+                      <div className="flex items-center gap-2">
+                        {config.icon}
+                        <div>
+                          <div className="font-medium">{config.name}</div>
+                          <div className="text-xs text-gray-500">{config.description}</div>
+                        </div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* 選択されたプロンプトの説明 */}
+              <div className="mt-2 p-3 bg-blue-50 rounded-lg text-sm">
+                <div className="flex items-center gap-2 font-medium text-blue-800 mb-1">
+                  {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].icon}
+                  {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
+                </div>
+                <div className="text-blue-700 text-xs mb-2">
+                  {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].description}
+                </div>
+                {visualAnalysisType !== "custom" && (
+                  <div className="text-blue-600 text-xs bg-white p-2 rounded border">
+                    {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].prompt}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* カスタムプロンプト入力 */}
+            {visualAnalysisType === "custom" && (
+              <div>
+                <Label htmlFor="customPrompt" className="text-base font-medium flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  カスタムプロンプト
+                </Label>
+                <Textarea
+                  id="customPrompt"
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  placeholder="独自の画像解析プロンプトを入力してください..."
+                  className="mt-2 min-h-[80px]"
+                  disabled={isCapturing}
+                />
+              </div>
+            )}
 
             {/* キャプチャ頻度 */}
             <div>
@@ -1060,7 +1187,8 @@ export default function AIVisionChat() {
                 <Button
                   onClick={isCapturing ? stopCapture : startCapture}
                   disabled={
-                    !periodicPrompt.trim() ||
+                    (visualAnalysisType === "custom" && !customPrompt.trim()) ||
+                    (visualAnalysisType !== "custom" && !getCurrentVisualPrompt().trim()) ||
                     !apiStatus.gemini ||
                     !apiStatus.tts ||
                     (!capabilities.camera && !capabilities.screenShare)
@@ -1121,6 +1249,11 @@ export default function AIVisionChat() {
                   音声入力
                 </div>
               )}
+              {isCapturing && (
+                <div className="absolute bottom-2 left-2 bg-purple-500 text-white px-2 py-1 rounded text-xs">
+                  {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -1130,7 +1263,7 @@ export default function AIVisionChat() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5" />
-              チャット履歴
+              顧客サポートチャット
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col h-[600px]">
@@ -1167,6 +1300,11 @@ export default function AIVisionChat() {
                           )}
                           {message.hasImage && (
                             <span className="text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">画像付き</span>
+                          )}
+                          {message.promptType && (
+                            <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
+                              {message.promptType}
+                            </span>
                           )}
                         </div>
                       </div>

@@ -8,9 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Mic,
   MicOff,
@@ -20,10 +20,8 @@ import {
   Monitor,
   AlertCircle,
   CheckCircle,
-  Send,
   Volume2,
   VolumeX,
-  MessageSquare,
   Eye,
   Info,
   Headphones,
@@ -32,6 +30,10 @@ import {
   Search,
   Type,
   ImageIcon,
+  FlipHorizontal,
+  Smartphone,
+  MessageSquare,
+  Send,
 } from "lucide-react"
 
 interface ChatMessage {
@@ -115,7 +117,7 @@ const SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッショナ
 
 ❌ 回答禁止例：
 「画像は扱えません」
-「画面共有はできません」
+「画面共有ができません」
 「私はテキストベースのAIです」
 
 例：正しい対応例
@@ -140,16 +142,15 @@ export default function AIVisionChat() {
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [interimTranscript, setInterimTranscript] = useState("")
   const [voiceConfidence, setVoiceConfidence] = useState(0)
+  const [isMobile, setIsMobile] = useState(false)
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment") // Default to rear camera
   const [capabilities, setCapabilities] = useState({
     camera: false,
     screenShare: false,
     speechRecognition: false,
+    mobileScreenShare: false,
+    multipleCameras: false,
   })
-  const [apiStatus, setApiStatus] = useState<{
-    gemini: boolean
-    tts: boolean
-    message: string
-  }>({ gemini: false, tts: false, message: "設定を確認中..." })
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -175,6 +176,19 @@ export default function AIVisionChat() {
     scrollToBottom()
   }, [messages])
 
+  // モバイルデバイス検出
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera
+      const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(
+        userAgent.toLowerCase(),
+      )
+      setIsMobile(isMobileDevice)
+    }
+
+    checkMobile()
+  }, [])
+
   // ブラウザ機能の検出
   useEffect(() => {
     const checkCapabilities = async () => {
@@ -182,12 +196,21 @@ export default function AIVisionChat() {
         camera: false,
         screenShare: false,
         speechRecognition: false,
+        mobileScreenShare: false,
+        multipleCameras: false,
       }
 
       // カメラアクセスの確認
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           caps.camera = true
+
+          // Check for multiple cameras on mobile
+          if (isMobile && navigator.mediaDevices.enumerateDevices) {
+            const devices = await navigator.mediaDevices.enumerateDevices()
+            const videoDevices = devices.filter((device) => device.kind === "videoinput")
+            caps.multipleCameras = videoDevices.length > 1
+          }
         }
       } catch (error) {
         console.log("Camera not supported:", error)
@@ -201,6 +224,19 @@ export default function AIVisionChat() {
           typeof navigator.mediaDevices.getDisplayMedia === "function"
         ) {
           caps.screenShare = true
+
+          // Check for mobile screen sharing support
+          // Note: This is a best-effort detection as browser support varies
+          if (isMobile) {
+            // iOS Safari 15+ and Android Chrome 84+ support screen sharing
+            const userAgent = navigator.userAgent.toLowerCase()
+            if (
+              (userAgent.includes("safari") && !userAgent.includes("chrome") && /version\/1[5-9]/.test(userAgent)) ||
+              (userAgent.includes("chrome") && /chrome\/(?:8[4-9]|9[0-9]|1[0-9][0-9])/.test(userAgent))
+            ) {
+              caps.mobileScreenShare = true
+            }
+          }
         }
       } catch (error) {
         console.log("Screen share not supported:", error)
@@ -227,13 +263,26 @@ export default function AIVisionChat() {
         if (caps.speechRecognition) {
           addMessage("system", "🎤 音声入力を有効にして、声で操作を開始できます。")
         }
+
+        // Mobile-specific messages
+        if (isMobile) {
+          if (caps.multipleCameras) {
+            addMessage("system", "📱 フロントカメラとリアカメラを切り替えることができます。")
+          }
+
+          if (caps.mobileScreenShare) {
+            addMessage("system", "📱 このモバイルデバイスでは画面共有が利用可能です。")
+          } else if (caps.screenShare) {
+            addMessage("system", "⚠️ モバイルデバイスでの画面共有は制限されている場合があります。")
+          }
+        }
       } else {
         addMessage("system", "⚠️ メディア機能が制限されています。")
       }
     }
 
     checkCapabilities()
-  }, [])
+  }, [isMobile])
 
   // API設定チェック
   useEffect(() => {
@@ -265,69 +314,119 @@ export default function AIVisionChat() {
   // 音声認識の初期化
   useEffect(() => {
     if (capabilities.speechRecognition) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = voiceLanguage
-
-      recognition.onstart = () => {
-        setIsListening(true)
-        addMessage("system", "🎤 音声認識を開始しました。話しかけてください。")
+      // Clean up previous recognition instance if it exists
+      if (recognitionRef.current) {
+        recognitionRef.current.onend = null
+        recognitionRef.current.onerror = null
+        recognitionRef.current.onresult = null
+        recognitionRef.current.onstart = null
+        recognitionRef.current.stop()
+        recognitionRef.current = null
       }
 
-      recognition.onresult = (event) => {
-        let interimTranscript = ""
-        let finalTranscript = ""
+      try {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+        if (!SpeechRecognition) {
+          console.error("Speech recognition not supported in this browser")
+          return
+        }
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript
-          const confidence = event.results[i][0].confidence
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = voiceLanguage
 
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript
-            setVoiceConfidence(confidence || 0)
-          } else {
-            interimTranscript += transcript
+        recognition.onstart = () => {
+          setIsListening(true)
+          addMessage("system", "🎤 音声認識を開始しました。話しかけてください。")
+        }
+
+        recognition.onresult = (event) => {
+          let interimTranscript = ""
+          let finalTranscript = ""
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript
+            const confidence = event.results[i][0].confidence
+
+            if (event.results[i].isFinal) {
+              finalTranscript += transcript
+              setVoiceConfidence(confidence || 0)
+            } else {
+              interimTranscript += transcript
+            }
+          }
+
+          setInterimTranscript(interimTranscript)
+
+          if (finalTranscript) {
+            handleVoiceInput(finalTranscript.trim())
+            setInterimTranscript("")
           }
         }
 
-        setInterimTranscript(interimTranscript)
-
-        if (finalTranscript) {
-          handleVoiceInput(finalTranscript.trim())
+        recognition.onerror = (event) => {
+          console.error("音声認識エラー:", event.error)
+          setIsListening(false)
           setInterimTranscript("")
+
+          // Only show errors that are not "no-speech" to reduce noise
+          if (event.error === "not-allowed") {
+            addMessage("system", "❌ 音声認識の許可が必要です。ブラウザの設定を確認してください。")
+          } else if (event.error !== "no-speech" && event.error !== "aborted") {
+            // Skip showing no-speech and aborted errors to reduce noise
+            addMessage("system", `❌ 音声認識エラー: ${event.error}`)
+          }
         }
+
+        recognition.onend = () => {
+          setIsListening(false)
+          setInterimTranscript("")
+
+          // Only restart if voice mode is still active and we're not intentionally stopping
+          if (isVoiceMode) {
+            // Add a small delay before restarting to prevent rapid restarts
+            setTimeout(() => {
+              try {
+                if (isVoiceMode && recognitionRef.current === recognition) {
+                  recognition.start()
+                }
+              } catch (error) {
+                console.error("Failed to restart speech recognition:", error)
+              }
+            }, 1000)
+          }
+        }
+
+        recognitionRef.current = recognition
+
+        // Start recognition if voice mode is already active
+        if (isVoiceMode && !isListening) {
+          try {
+            recognition.start()
+          } catch (error) {
+            console.error("Failed to start speech recognition:", error)
+          }
+        }
+      } catch (error) {
+        console.error("Speech recognition initialization error:", error)
+        setCapabilities((prev) => ({ ...prev, speechRecognition: false }))
       }
 
-      recognition.onerror = (event) => {
-        console.error("音声認識エラー:", event.error)
-        setIsListening(false)
-        setInterimTranscript("")
-
-        if (event.error === "not-allowed") {
-          addMessage("system", "❌ 音声認識の許可が必要です。ブラウザの設定を確認してください。")
-        } else if (event.error === "no-speech") {
-          addMessage("system", "⚠️ 音声が検出されませんでした。もう一度お試しください。")
-        } else {
-          addMessage("system", `❌ 音声認識エラー: ${event.error}`)
+      // Cleanup function
+      return () => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.onend = null
+            recognitionRef.current.onerror = null
+            recognitionRef.current.onresult = null
+            recognitionRef.current.onstart = null
+            recognitionRef.current.stop()
+          } catch (error) {
+            console.error("Error cleaning up speech recognition:", error)
+          }
         }
       }
-
-      recognition.onend = () => {
-        setIsListening(false)
-        setInterimTranscript("")
-        if (isVoiceMode) {
-          // 音声入力が有効な場合は自動的に再開
-          setTimeout(() => {
-            if (isVoiceMode && !isListening) {
-              recognition.start()
-            }
-          }, 1000)
-        }
-      }
-
-      recognitionRef.current = recognition
     }
   }, [capabilities.speechRecognition, voiceLanguage, isVoiceMode])
 
@@ -382,6 +481,12 @@ export default function AIVisionChat() {
       addMessage("system", "📷 カメラを開始します...")
       setCaptureMode("camera")
       setTimeout(() => startCapture(), 1000)
+    } else if (lowerTranscript.includes("カメラ切替") || lowerTranscript.includes("カメラを切り替え")) {
+      if (capabilities.multipleCameras) {
+        toggleCamera()
+      } else {
+        addMessage("system", "⚠️ カメラの切り替えはこのデバイスでは利用できません。")
+      }
     } else if (lowerTranscript.includes("停止") || lowerTranscript.includes("止めて")) {
       addMessage("system", "⏹️ キャプチャを停止します...")
       stopCapture()
@@ -390,6 +495,48 @@ export default function AIVisionChat() {
     } else {
       // 通常のチャットメッセージとして処理（システムプロンプト使用）
       await sendVoiceMessage(transcript)
+    }
+  }
+
+  // カメラ切り替え機能
+  const toggleCamera = async () => {
+    if (!capabilities.multipleCameras || !isCapturing || captureMode !== "camera") {
+      return
+    }
+
+    // 現在のストリームを停止
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop())
+    }
+
+    // カメラの向きを切り替え
+    const newFacingMode = facingMode === "user" ? "environment" : "user"
+    setFacingMode(newFacingMode)
+
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: newFacingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      })
+
+      setStream(newStream)
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = newStream
+        await videoRef.current.play()
+      }
+
+      addMessage("system", `📷 カメラを${newFacingMode === "user" ? "フロント" : "リア"}カメラに切り替えました。`)
+    } catch (error) {
+      console.error("カメラ切り替えエラー:", error)
+      addMessage(
+        "system",
+        `❌ カメラの切り替えに失敗しました: ${error instanceof Error ? error.message : "不明なエラー"}`,
+      )
     }
   }
 
@@ -448,36 +595,74 @@ export default function AIVisionChat() {
 
   // 画面共有を開始する関数
   const startScreenShare = async (): Promise<MediaStream> => {
-    const mediaStream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
-      },
-      audio: false,
-    })
+    try {
+      const mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
+        audio: false,
+      })
 
-    mediaStream.getVideoTracks()[0].addEventListener("ended", () => {
-      addMessage("system", "画面共有が停止されました。")
-      stopCapture()
-    })
+      mediaStream.getVideoTracks()[0].addEventListener("ended", () => {
+        addMessage("system", "画面共有が停止されました。")
+        stopCapture()
+      })
 
-    return mediaStream
+      return mediaStream
+    } catch (error) {
+      // モバイルでの画面共有エラーに対する特別なメッセージ
+      if (isMobile) {
+        console.error("Mobile screen sharing error:", error)
+        throw new Error(
+          "モバイルデバイスでの画面共有に失敗しました。ブラウザの制限により、一部のモバイルデバイスでは画面共有が利用できない場合があります。カメラモードをお試しください。",
+        )
+      }
+      throw error
+    }
   }
 
   // カメラを開始する関数
   const startCamera = async (): Promise<MediaStream> => {
-    const mediaStream = await navigator.mediaDevices.getUserMedia({
+    const constraints = {
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
         frameRate: { ideal: 30 },
-        facingMode: "user",
+        facingMode: facingMode, // Use the current facingMode state
       },
       audio: false,
-    })
+    }
 
-    return mediaStream
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+      return mediaStream
+    } catch (error) {
+      console.error("Camera access error:", error)
+
+      // If we failed with the current facing mode, try the opposite as fallback
+      if (isMobile && facingMode === "environment") {
+        setFacingMode("user")
+        addMessage("system", "⚠️ リアカメラへのアクセスに失敗しました。フロントカメラを試します。")
+
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: "user",
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          })
+          return fallbackStream
+        } catch (fallbackError) {
+          throw new Error("カメラアクセスに失敗しました。ブラウザの設定でカメラの許可を確認してください。")
+        }
+      }
+
+      throw error
+    }
   }
 
   // メインのキャプチャ開始関数
@@ -488,6 +673,13 @@ export default function AIVisionChat() {
       if (captureMode === "screen") {
         if (!capabilities.screenShare) {
           throw new Error("画面共有がサポートされていません。カメラモードを選択してください。")
+        }
+
+        if (isMobile && !capabilities.mobileScreenShare) {
+          addMessage(
+            "system",
+            "⚠️ お使いのモバイルデバイスでは画面共有機能が制限されている可能性があります。問題が発生した場合はカメラモードをお試しください。",
+          )
         }
 
         try {
@@ -515,7 +707,10 @@ export default function AIVisionChat() {
 
         try {
           mediaStream = await startCamera()
-          addMessage("system", "✅ カメラを開始しました。")
+          addMessage(
+            "system",
+            `✅ カメラを開始しました。${isMobile && capabilities.multipleCameras ? `(${facingMode === "user" ? "フロント" : "リア"}カメラ使用中)` : ""}`,
+          )
         } catch (error: any) {
           if (error.name === "NotAllowedError") {
             throw new Error("カメラアクセスが拒否されました。ブラウザの設定でカメラの許可を有効にしてください。")
@@ -548,7 +743,10 @@ export default function AIVisionChat() {
         const currentPromptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
         addMessage(
           "system",
-          `${getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace("{frequency}", frequency)} (${currentPromptName}モード)`,
+          `${getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace(
+            "{frequency}",
+            frequency,
+          )} (${currentPromptName}モード)`,
         )
       } else {
         addMessage("system", getLocalizedText("noPeriodicAnalysis", interfaceLanguage))
@@ -759,20 +957,31 @@ export default function AIVisionChat() {
   }
 
   const toggleVoiceMode = () => {
-    if (!recognitionRef.current) {
+    if (!capabilities.speechRecognition) {
       addMessage("system", "❌ 音声認識がサポートされていません。")
       return
     }
 
     if (isVoiceMode) {
       setIsVoiceMode(false)
-      if (isListening) {
-        recognitionRef.current.stop()
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop()
+        } catch (error) {
+          console.error("Error stopping speech recognition:", error)
+        }
       }
       addMessage("system", "🔇 音声入力を終了しました。")
     } else {
       setIsVoiceMode(true)
-      recognitionRef.current.start()
+      if (recognitionRef.current && !isListening) {
+        try {
+          recognitionRef.current.start()
+        } catch (error) {
+          console.error("Error starting speech recognition:", error)
+          addMessage("system", "❌ 音声認識の開始に失敗しました。ブラウザの設定を確認してください。")
+        }
+      }
       addMessage(
         "system",
         "🎤 音声入力を開始しました。「画面共有」「カメラ」「停止」などの音声コマンドが利用できます。",
@@ -787,9 +996,18 @@ export default function AIVisionChat() {
     }
 
     if (isListening) {
-      recognitionRef.current.stop()
+      try {
+        recognitionRef.current.stop()
+      } catch (error) {
+        console.error("Error stopping speech recognition:", error)
+      }
     } else {
-      recognitionRef.current.start()
+      try {
+        recognitionRef.current.start()
+      } catch (error) {
+        console.error("Error starting speech recognition:", error)
+        addMessage("system", "❌ 音声認識の開始に失敗しました。ブラウザの設定を確認してください。")
+      }
     }
   }
 
@@ -818,12 +1036,25 @@ export default function AIVisionChat() {
   }
 
   const handleCaptureModeChange = (value: "camera" | "screen") => {
-    if (value === "screen" && !capabilities.screenShare) {
-      addMessage("system", "⚠️ 画面共有が利用できません。カメラモードを使用してください。")
-      return
+    if (value === "screen") {
+      if (!capabilities.screenShare) {
+        addMessage("system", "⚠️ 画面共有が利用できません。カメラモードを使用してください。")
+        return
+      }
+
+      if (isMobile && !capabilities.mobileScreenShare) {
+        addMessage("system", "⚠️ お使いのモバイルデバイスでは画面共有機能が制限されている可能性があります。")
+      }
     }
     setCaptureMode(value)
   }
+
+  // API状態
+  const [apiStatus, setApiStatus] = useState<{
+    gemini: boolean
+    tts: boolean
+    message: string
+  }>({ gemini: false, tts: false, message: "設定を確認中..." })
 
   // Localization function
   const getLocalizedText = (key: string, lang: string) => {
@@ -939,7 +1170,7 @@ export default function AIVisionChat() {
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左側: コントロールパネル */}
-        <Card className="lg:col-span-1">
+        <Card className="lg:col-span-1 self-start sticky top-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Camera className="w-5 h-5" />
@@ -1041,12 +1272,14 @@ export default function AIVisionChat() {
                       <Camera className="w-3 h-3" />
                       <span className={capabilities.camera ? "text-green-600" : "text-red-600"}>
                         カメラ: {capabilities.camera ? "利用可能" : "利用不可"}
+                        {capabilities.camera && capabilities.multipleCameras && " (複数カメラ対応)"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Monitor className="w-3 h-3" />
                       <span className={capabilities.screenShare ? "text-green-600" : "text-red-600"}>
                         画面共有: {capabilities.screenShare ? "利用可能" : "利用不可"}
+                        {capabilities.screenShare && isMobile && !capabilities.mobileScreenShare && " (制限あり)"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1055,10 +1288,17 @@ export default function AIVisionChat() {
                         音声認識: {capabilities.speechRecognition ? "利用可能" : "利用不可"}
                       </span>
                     </div>
+                    {isMobile && (
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-3 h-3" />
+                        <span className="text-blue-600">モバイルデバイス検出済み</span>
+                      </div>
+                    )}
                   </div>
                   {capabilities.speechRecognition && (
                     <div className="mt-2 p-2 bg-blue-50 rounded text-xs">
                       💡 音声コマンド: 「画面共有」「カメラ」「停止」「音声入力終了」
+                      {capabilities.multipleCameras && "「カメラ切替」"}
                     </div>
                   )}
                 </div>
@@ -1096,6 +1336,21 @@ export default function AIVisionChat() {
                 </div>
               </RadioGroup>
             </div>
+
+            {/* カメラ切り替えボタン (モバイルかつ複数カメラがある場合のみ表示) */}
+            {isMobile && capabilities.multipleCameras && captureMode === "camera" && (
+              <div>
+                <Button
+                  onClick={toggleCamera}
+                  variant="outline"
+                  className="w-full"
+                  disabled={!capabilities.multipleCameras || isCapturing === false}
+                >
+                  <FlipHorizontal className="w-4 h-4 mr-2" />
+                  {facingMode === "user" ? "リアカメラに切替" : "フロントカメラに切替"}
+                </Button>
+              </div>
+            )}
 
             {/* 画像解析プロンプト選択 */}
             <div>
@@ -1241,6 +1496,10 @@ export default function AIVisionChat() {
               {isCapturing && (
                 <div className="absolute top-2 left-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
                   {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
+                  {captureMode === "camera" &&
+                    isMobile &&
+                    capabilities.multipleCameras &&
+                    ` (${facingMode === "user" ? "フロント" : "リア"})`}
                 </div>
               )}
               {isVoiceMode && (
@@ -1258,17 +1517,17 @@ export default function AIVisionChat() {
           </CardContent>
         </Card>
 
-        {/* 右側: チャット画面 */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
+        {/* 右側: チャット画面 - 高さを画面いっぱいに拡張 */}
+        <Card className="lg:col-span-2 flex flex-col" style={{ minHeight: "calc(100vh - 2rem)" }}>
+          <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5" />
               顧客サポートチャット
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col h-[600px]">
-            {/* メッセージ表示エリア */}
-            <ScrollArea className="flex-1 pr-4 mb-4">
+          <CardContent className="flex flex-col flex-grow p-4 pt-0">
+            {/* メッセージ表示エリア - 高さを自動調整 */}
+            <ScrollArea className="flex-grow pr-4 mb-4">
               <div className="space-y-4">
                 {messages.map((message) => (
                   <div
@@ -1315,8 +1574,8 @@ export default function AIVisionChat() {
               </div>
             </ScrollArea>
 
-            {/* チャット入力エリア */}
-            <div className="border-t pt-4">
+            {/* チャット入力エリア - 下部に固定 */}
+            <div className="border-t pt-4 mt-auto">
               <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
                 <MessageSquare className="w-4 h-4" />
                 {getLocalizedText("realTimeChat", interfaceLanguage)}

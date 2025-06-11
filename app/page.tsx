@@ -144,6 +144,7 @@ export default function AIVisionChat() {
   const [voiceConfidence, setVoiceConfidence] = useState(0)
   const [isMobile, setIsMobile] = useState(false)
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment") // Default to rear camera
+  const [cameraError, setCameraError] = useState<string | null>(null)
   const [capabilities, setCapabilities] = useState({
     camera: false,
     screenShare: false,
@@ -158,6 +159,7 @@ export default function AIVisionChat() {
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement>(null)
 
   // Get current visual analysis prompt
   const getCurrentVisualPrompt = () => {
@@ -514,6 +516,9 @@ export default function AIVisionChat() {
     setFacingMode(newFacingMode)
 
     try {
+      // Clear any previous camera errors
+      setCameraError(null)
+
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: newFacingMode,
@@ -527,12 +532,23 @@ export default function AIVisionChat() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = newStream
-        await videoRef.current.play()
+
+        // Make sure to wait for the video to be loaded
+        videoRef.current.onloadedmetadata = async () => {
+          try {
+            await videoRef.current?.play()
+            console.log("Camera switched and playing successfully")
+          } catch (playError) {
+            console.error("Error playing video after camera switch:", playError)
+            setCameraError("カメラの再生に失敗しました。ブラウザの設定を確認してください。")
+          }
+        }
       }
 
       addMessage("system", `📷 カメラを${newFacingMode === "user" ? "フロント" : "リア"}カメラに切り替えました。`)
     } catch (error) {
       console.error("カメラ切り替えエラー:", error)
+      setCameraError(`カメラの切り替えに失敗しました: ${error instanceof Error ? error.message : "不明なエラー"}`)
       addMessage(
         "system",
         `❌ カメラの切り替えに失敗しました: ${error instanceof Error ? error.message : "不明なエラー"}`,
@@ -625,43 +641,65 @@ export default function AIVisionChat() {
 
   // カメラを開始する関数
   const startCamera = async (): Promise<MediaStream> => {
+    // Clear any previous camera errors
+    setCameraError(null)
+
+    // Try with exact constraints for better camera control
     const constraints = {
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
         frameRate: { ideal: 30 },
-        facingMode: facingMode, // Use the current facingMode state
+        facingMode: { exact: facingMode }, // Use exact to force the specific camera
       },
       audio: false,
     }
 
     try {
+      console.log(`Attempting to access camera with facingMode: ${facingMode}`)
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
       return mediaStream
     } catch (error) {
-      console.error("Camera access error:", error)
+      console.error(`Failed to access camera with exact facingMode ${facingMode}:`, error)
 
-      // If we failed with the current facing mode, try the opposite as fallback
-      if (isMobile && facingMode === "environment") {
-        setFacingMode("user")
-        addMessage("system", "⚠️ リアカメラへのアクセスに失敗しました。フロントカメラを試します。")
+      // If exact constraint fails, try with ideal (less strict)
+      try {
+        const fallbackConstraints = {
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: { ideal: facingMode },
+          },
+          audio: false,
+        }
 
+        console.log("Trying with ideal facingMode constraint")
+        const fallbackStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints)
+        return fallbackStream
+      } catch (fallbackError) {
+        console.error("Failed with ideal constraint too:", fallbackError)
+
+        // Last resort: try with any camera
         try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: "user",
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
+          console.log("Trying with any available camera")
+          const lastResortStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
             audio: false,
           })
-          return fallbackStream
-        } catch (fallbackError) {
+
+          // If we get here with environment mode, we likely got the front camera
+          if (facingMode === "environment") {
+            setFacingMode("user")
+            addMessage("system", "⚠️ リアカメラへのアクセスに失敗しました。フロントカメラを使用します。")
+          }
+
+          return lastResortStream
+        } catch (lastError) {
+          console.error("All camera access attempts failed:", lastError)
+          setCameraError("カメラアクセスに失敗しました。ブラウザの設定でカメラの許可を確認してください。")
           throw new Error("カメラアクセスに失敗しました。ブラウザの設定でカメラの許可を確認してください。")
         }
       }
-
-      throw error
     }
   }
 
@@ -726,7 +764,19 @@ export default function AIVisionChat() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream
-        await videoRef.current.play()
+
+        // Use onloadedmetadata to ensure the video is ready before playing
+        videoRef.current.onloadedmetadata = async () => {
+          try {
+            if (videoRef.current) {
+              await videoRef.current.play()
+              console.log("Video is now playing")
+            }
+          } catch (playError) {
+            console.error("Error playing video:", playError)
+            setCameraError("ビデオの再生に失敗しました。ブラウザの設定を確認してください。")
+          }
+        }
       }
 
       setIsCapturing(true)
@@ -780,6 +830,7 @@ export default function AIVisionChat() {
     }
 
     setIsCapturing(false)
+    setCameraError(null)
     addMessage("system", "キャプチャを停止しました。")
   }
 
@@ -788,27 +839,40 @@ export default function AIVisionChat() {
       return null
     }
 
+    const video = videoRef.current
     const canvas = canvasRef.current
     const ctx = canvas.getContext("2d")
     if (!ctx) return null
 
-    if (videoRef.current.readyState < 2) {
+    // Check if video is ready
+    if (video.readyState < 2) {
+      console.log("Video not ready for capture, readyState:", video.readyState)
       return null
     }
 
-    canvas.width = videoRef.current.videoWidth
-    canvas.height = videoRef.current.videoHeight
-
-    if (canvas.width === 0 || canvas.height === 0) {
+    // Check if video dimensions are valid
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      console.log("Invalid video dimensions:", video.videoWidth, video.videoHeight)
       return null
     }
 
-    ctx.drawImage(videoRef.current, 0, 0)
+    try {
+      // Set canvas dimensions to match video
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
 
-    const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9)
-    const base64Data = imageDataUrl.split(",")[1]
+      // Draw the current video frame to the canvas
+      ctx.drawImage(video, 0, 0)
 
-    return base64Data
+      // Convert to JPEG with 90% quality
+      const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9)
+      const base64Data = imageDataUrl.split(",")[1]
+
+      return base64Data
+    } catch (error) {
+      console.error("Error capturing frame:", error)
+      return null
+    }
   }
 
   const captureAndAnalyze = async () => {
@@ -857,12 +921,16 @@ export default function AIVisionChat() {
           speakText(result.analysis)
         }
       } else {
-        addMessage("system", `❌ 定期解析エラー: ${result.error}`, true)
+        addMessage("system", `❌ 解析エラー: ${result.error}`, isActuallyPeriodic)
         console.error("Analysis error:", result.error)
       }
     } catch (error) {
-      console.error("定期解析エラー:", error)
-      addMessage("system", `❌ 定期解析エラー: ${error instanceof Error ? error.message : "不明なエラー"}`, true)
+      console.error("解析エラー:", error)
+      addMessage(
+        "system",
+        `❌ 解析エラー: ${error instanceof Error ? error.message : "不明なエラー"}`,
+        Number.parseFloat(frequency) > 0,
+      )
     } finally {
       setIsProcessing(false)
     }
@@ -921,6 +989,11 @@ export default function AIVisionChat() {
       addMessage("system", `❌ チャット送信エラー: ${error instanceof Error ? error.message : "不明なエラー"}`)
     } finally {
       setIsSendingChat(false)
+
+      // Focus back on the chat input after sending
+      setTimeout(() => {
+        chatInputRef.current?.focus()
+      }, 100)
     }
   }
 
@@ -1239,11 +1312,12 @@ export default function AIVisionChat() {
                 </div>
               </ScrollArea>
 
-              {/* Mobile Chat Input */}
-              <div className="border-t pt-3">
+              {/* Mobile Chat Input - Always visible and fixed at bottom */}
+              <div className="border-t pt-3 relative z-10">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Textarea
+                      ref={chatInputRef}
                       value={chatMessage}
                       onChange={(e) => setChatMessage(e.target.value)}
                       onKeyPress={handleChatKeyPress}
@@ -1422,21 +1496,31 @@ export default function AIVisionChat() {
                 </Button>
               )}
 
-              {/* Video Preview */}
+              {/* Video Preview with Error Handling */}
               <div className="relative">
+                {cameraError && (
+                  <Alert variant="destructive" className="mb-2 py-1">
+                    <AlertCircle className="h-3 w-3" />
+                    <AlertDescription className="text-xs">{cameraError}</AlertDescription>
+                  </Alert>
+                )}
+
                 <video
                   ref={videoRef}
                   className="w-full rounded-lg bg-black"
-                  style={{ maxHeight: "150px" }}
+                  style={{ maxHeight: "150px", objectFit: "contain" }}
                   muted
                   playsInline
+                  autoPlay
                 />
                 <canvas ref={canvasRef} className="hidden" />
+
                 {isProcessing && (
                   <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
                     <div className="text-white text-xs">解析中...</div>
                   </div>
                 )}
+
                 {isCapturing && (
                   <div className="absolute top-1 left-1 bg-red-500 text-white px-1 py-0.5 rounded text-xs">
                     {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
@@ -1446,6 +1530,7 @@ export default function AIVisionChat() {
                       ` (${facingMode === "user" ? "フロント" : "リア"})`}
                   </div>
                 )}
+
                 {isVoiceMode && (
                   <div className="absolute top-1 right-1 bg-blue-500 text-white px-1 py-0.5 rounded text-xs flex items-center gap-1">
                     <Mic className="w-2 h-2" />
@@ -1769,21 +1854,31 @@ export default function AIVisionChat() {
                 )}
               </div>
 
-              {/* ビデオプレビュー */}
+              {/* ビデオプレビュー with Error Handling */}
               <div className="relative">
+                {cameraError && (
+                  <Alert variant="destructive" className="mb-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="text-sm">{cameraError}</AlertDescription>
+                  </Alert>
+                )}
+
                 <video
                   ref={videoRef}
                   className="w-full rounded-lg bg-black"
-                  style={{ maxHeight: "200px" }}
+                  style={{ maxHeight: "200px", objectFit: "contain" }}
                   muted
                   playsInline
+                  autoPlay
                 />
                 <canvas ref={canvasRef} className="hidden" />
+
                 {isProcessing && (
                   <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
                     <div className="text-white text-sm">解析中...</div>
                   </div>
                 )}
+
                 {isCapturing && (
                   <div className="absolute top-2 left-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
                     {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
@@ -1793,12 +1888,14 @@ export default function AIVisionChat() {
                       ` (${facingMode === "user" ? "フロント" : "リア"})`}
                   </div>
                 )}
+
                 {isVoiceMode && (
                   <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
                     <Mic className="w-3 h-3" />
                     音声入力
                   </div>
                 )}
+
                 {isCapturing && (
                   <div className="absolute bottom-2 left-2 bg-purple-500 text-white px-2 py-1 rounded text-xs">
                     {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
@@ -1864,7 +1961,8 @@ export default function AIVisionChat() {
                 </div>
               </ScrollArea>
 
-              <div className="border-t pt-4 mt-auto">
+              {/* Desktop Chat Input - Always visible and fixed at bottom */}
+              <div className="border-t pt-4 mt-auto relative z-10">
                 <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
                   <MessageSquare className="w-4 h-4" />
                   {getLocalizedText("realTimeChat", interfaceLanguage)}
@@ -1873,6 +1971,7 @@ export default function AIVisionChat() {
                   <div className="relative flex-1">
                     <Textarea
                       id="chatMessage"
+                      ref={chatInputRef}
                       value={chatMessage}
                       onChange={(e) => setChatMessage(e.target.value)}
                       onKeyPress={handleChatKeyPress}

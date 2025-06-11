@@ -11,6 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Mic,
   MicOff,
@@ -23,17 +26,19 @@ import {
   Volume2,
   VolumeX,
   Eye,
-  Info,
-  Headphones,
   Settings,
   FileText,
   Search,
   Type,
   ImageIcon,
   FlipHorizontal,
-  Smartphone,
   MessageSquare,
   Send,
+  Upload,
+  Save,
+  RotateCcw,
+  Database,
+  Brain,
 } from "lucide-react"
 
 interface ChatMessage {
@@ -57,6 +62,14 @@ interface SpeechRecognition extends EventTarget {
   onerror: (event: any) => void
   onend: () => void
   onstart: () => void
+}
+
+interface RAGDocument {
+  id: string
+  title: string
+  content: string
+  category: string
+  timestamp: Date
 }
 
 declare global {
@@ -101,8 +114,8 @@ const VISUAL_ANALYSIS_PROMPTS = {
   },
 }
 
-// System Prompt (Customer Support Professional)
-const SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッショナルです。現在、ユーザーから音声またはチャットで問い合わせが寄せられています。
+// Default System Prompt (Customer Support Professional)
+const DEFAULT_SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッショナルです。現在、ユーザーから音声またはチャットで問い合わせが寄せられています。
 あなたの役割は、丁寧で信頼感のある対応を行い、ユーザーの問題を的確に解決することです。以下の対応方針に従ってください：
 
 【対応方針】
@@ -135,7 +148,6 @@ export default function AIVisionChat() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isSendingChat, setIsSendingChat] = useState(false)
   const [isTTSEnabled, setIsTTSEnabled] = useState(true)
-  const [isVoiceMode, setIsVoiceMode] = useState(false)
   const [voiceLanguage, setVoiceLanguage] = useState("ja-JP")
   const [interfaceLanguage, setInterfaceLanguage] = useState("ja")
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -143,8 +155,15 @@ export default function AIVisionChat() {
   const [interimTranscript, setInterimTranscript] = useState("")
   const [voiceConfidence, setVoiceConfidence] = useState(0)
   const [isMobile, setIsMobile] = useState(false)
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment") // Default to rear camera
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment")
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
+  const [tempSystemPrompt, setTempSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
+  const [ragDocuments, setRagDocuments] = useState<RAGDocument[]>([])
+  const [newDocTitle, setNewDocTitle] = useState("")
+  const [newDocContent, setNewDocContent] = useState("")
+  const [newDocCategory, setNewDocCategory] = useState("FAQ")
   const [capabilities, setCapabilities] = useState({
     camera: false,
     screenShare: false,
@@ -160,6 +179,7 @@ export default function AIVisionChat() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Get current visual analysis prompt
   const getCurrentVisualPrompt = () => {
@@ -167,6 +187,76 @@ export default function AIVisionChat() {
       return customPrompt
     }
     return VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].prompt
+  }
+
+  // RAG functionality
+  const searchRAGDocuments = (query: string): string => {
+    if (ragDocuments.length === 0) return ""
+
+    const queryLower = query.toLowerCase()
+    const relevantDocs = ragDocuments.filter(
+      (doc) =>
+        doc.title.toLowerCase().includes(queryLower) ||
+        doc.content.toLowerCase().includes(queryLower) ||
+        doc.category.toLowerCase().includes(queryLower),
+    )
+
+    if (relevantDocs.length === 0) return ""
+
+    return relevantDocs.map((doc) => `[${doc.category}] ${doc.title}: ${doc.content}`).join("\n\n")
+  }
+
+  const addRAGDocument = () => {
+    if (!newDocTitle.trim() || !newDocContent.trim()) return
+
+    const newDoc: RAGDocument = {
+      id: `${Date.now()}-${Math.random()}`,
+      title: newDocTitle.trim(),
+      content: newDocContent.trim(),
+      category: newDocCategory,
+      timestamp: new Date(),
+    }
+
+    setRagDocuments((prev) => [...prev, newDoc])
+    setNewDocTitle("")
+    setNewDocContent("")
+    addMessage("system", `📚 RAG文書「${newDoc.title}」を追加しました。`)
+  }
+
+  const removeRAGDocument = (id: string) => {
+    setRagDocuments((prev) => prev.filter((doc) => doc.id !== id))
+    addMessage("system", "📚 RAG文書を削除しました。")
+  }
+
+  const loadRAGFromFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string
+        const lines = content.split("\n").filter((line) => line.trim())
+
+        lines.forEach((line, index) => {
+          if (line.trim()) {
+            const newDoc: RAGDocument = {
+              id: `${Date.now()}-${index}`,
+              title: `インポート文書 ${index + 1}`,
+              content: line.trim(),
+              category: "インポート",
+              timestamp: new Date(),
+            }
+            setRagDocuments((prev) => [...prev, newDoc])
+          }
+        })
+
+        addMessage("system", `📚 ${lines.length}件のRAG文書をインポートしました。`)
+      } catch (error) {
+        addMessage("system", "❌ ファイルの読み込みに失敗しました。")
+      }
+    }
+    reader.readAsText(file)
   }
 
   // メッセージを最下部にスクロール
@@ -228,9 +318,7 @@ export default function AIVisionChat() {
           caps.screenShare = true
 
           // Check for mobile screen sharing support
-          // Note: This is a best-effort detection as browser support varies
           if (isMobile) {
-            // iOS Safari 15+ and Android Chrome 84+ support screen sharing
             const userAgent = navigator.userAgent.toLowerCase()
             if (
               (userAgent.includes("safari") && !userAgent.includes("chrome") && /version\/1[5-9]/.test(userAgent)) ||
@@ -263,19 +351,13 @@ export default function AIVisionChat() {
       if (availableFeatures.length > 0) {
         addMessage("system", `✅ 利用可能な機能: ${availableFeatures.join(", ")}`)
         if (caps.speechRecognition) {
-          addMessage("system", "🎤 音声入力を有効にして、声で操作を開始できます。")
+          addMessage("system", "🎤 チャット入力欄のマイクアイコンで音声入力が利用できます。")
         }
 
         // Mobile-specific messages
         if (isMobile) {
           if (caps.multipleCameras) {
             addMessage("system", "📱 フロントカメラとリアカメラを切り替えることができます。")
-          }
-
-          if (caps.mobileScreenShare) {
-            addMessage("system", "📱 このモバイルデバイスでは画面共有が利用可能です。")
-          } else if (caps.screenShare) {
-            addMessage("system", "⚠️ モバイルデバイスでの画面共有は制限されている場合があります。")
           }
         }
       } else {
@@ -334,13 +416,12 @@ export default function AIVisionChat() {
         }
 
         const recognition = new SpeechRecognition()
-        recognition.continuous = true
+        recognition.continuous = false
         recognition.interimResults = true
         recognition.lang = voiceLanguage
 
         recognition.onstart = () => {
           setIsListening(true)
-          addMessage("system", "🎤 音声認識を開始しました。話しかけてください。")
         }
 
         recognition.onresult = (event) => {
@@ -362,7 +443,7 @@ export default function AIVisionChat() {
           setInterimTranscript(interimTranscript)
 
           if (finalTranscript) {
-            handleVoiceInput(finalTranscript.trim())
+            setChatMessage(finalTranscript.trim())
             setInterimTranscript("")
           }
         }
@@ -372,11 +453,9 @@ export default function AIVisionChat() {
           setIsListening(false)
           setInterimTranscript("")
 
-          // Only show errors that are not "no-speech" to reduce noise
           if (event.error === "not-allowed") {
             addMessage("system", "❌ 音声認識の許可が必要です。ブラウザの設定を確認してください。")
           } else if (event.error !== "no-speech" && event.error !== "aborted") {
-            // Skip showing no-speech and aborted errors to reduce noise
             addMessage("system", `❌ 音声認識エラー: ${event.error}`)
           }
         }
@@ -384,32 +463,9 @@ export default function AIVisionChat() {
         recognition.onend = () => {
           setIsListening(false)
           setInterimTranscript("")
-
-          // Only restart if voice mode is still active and we're not intentionally stopping
-          if (isVoiceMode) {
-            // Add a small delay before restarting to prevent rapid restarts
-            setTimeout(() => {
-              try {
-                if (isVoiceMode && recognitionRef.current === recognition) {
-                  recognition.start()
-                }
-              } catch (error) {
-                console.error("Failed to restart speech recognition:", error)
-              }
-            }, 1000)
-          }
         }
 
         recognitionRef.current = recognition
-
-        // Start recognition if voice mode is already active
-        if (isVoiceMode && !isListening) {
-          try {
-            recognition.start()
-          } catch (error) {
-            console.error("Failed to start speech recognition:", error)
-          }
-        }
       } catch (error) {
         console.error("Speech recognition initialization error:", error)
         setCapabilities((prev) => ({ ...prev, speechRecognition: false }))
@@ -430,7 +486,7 @@ export default function AIVisionChat() {
         }
       }
     }
-  }, [capabilities.speechRecognition, voiceLanguage, isVoiceMode])
+  }, [capabilities.speechRecognition, voiceLanguage])
 
   const addMessage = useCallback(
     (
@@ -461,42 +517,6 @@ export default function AIVisionChat() {
       currentAudioRef.current.pause()
       currentAudioRef.current.currentTime = 0
       currentAudioRef.current = null
-    }
-  }
-
-  // 音声入力の処理
-  const handleVoiceInput = async (transcript: string) => {
-    addMessage("voice", transcript, false, true)
-
-    // 音声コマンドの解析
-    const lowerTranscript = transcript.toLowerCase()
-
-    if (
-      lowerTranscript.includes("画面共有") ||
-      lowerTranscript.includes("スクリーン") ||
-      lowerTranscript.includes("画面を共有")
-    ) {
-      addMessage("system", "🖥️ 画面共有を開始します...")
-      setCaptureMode("screen")
-      setTimeout(() => startCapture(), 1000)
-    } else if (lowerTranscript.includes("カメラ") || lowerTranscript.includes("カメラを開始")) {
-      addMessage("system", "📷 カメラを開始します...")
-      setCaptureMode("camera")
-      setTimeout(() => startCapture(), 1000)
-    } else if (lowerTranscript.includes("カメラ切替") || lowerTranscript.includes("カメラを切り替え")) {
-      if (capabilities.multipleCameras) {
-        toggleCamera()
-      } else {
-        addMessage("system", "⚠️ カメラの切り替えはこのデバイスでは利用できません。")
-      }
-    } else if (lowerTranscript.includes("停止") || lowerTranscript.includes("止めて")) {
-      addMessage("system", "⏹️ キャプチャを停止します...")
-      stopCapture()
-    } else if (lowerTranscript.includes("音声入力終了") || lowerTranscript.includes("音声を止めて")) {
-      toggleVoiceMode()
-    } else {
-      // 通常のチャットメッセージとして処理（システムプロンプト使用）
-      await sendVoiceMessage(transcript)
     }
   }
 
@@ -556,59 +576,6 @@ export default function AIVisionChat() {
     }
   }
 
-  // 音声メッセージの送信（システムプロンプト使用）
-  const sendVoiceMessage = async (message: string) => {
-    if (isSendingChat) return
-
-    setIsSendingChat(true)
-
-    try {
-      // 現在のフレームをキャプチャ（利用可能な場合）
-      const base64Data = await captureCurrentFrame()
-
-      const requestBody: any = {
-        prompt: message,
-        systemPrompt: SYSTEM_PROMPT,
-        mimeType: "image/jpeg",
-      }
-
-      if (base64Data) {
-        requestBody.image = base64Data
-        addMessage("system", "📸 音声入力と現在の画像を一緒に送信中...")
-      } else {
-        addMessage("system", "💬 音声入力を送信中...")
-      }
-
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Language-Code": voiceLanguage,
-        },
-        body: JSON.stringify(requestBody),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        addMessage("ai", result.response, false, false, !!base64Data, "システムプロンプト")
-
-        // 音声で読み上げ（TTSが有効な場合）
-        if (result.response && isTTSEnabled) {
-          speakText(result.response)
-        }
-      } else {
-        addMessage("system", `❌ チャットエラー: ${result.error}`)
-        console.error("Chat error:", result.error)
-      }
-    } catch (error) {
-      console.error("音声チャット送信エラー:", error)
-      addMessage("system", `❌ 音声チャット送信エラー: ${error instanceof Error ? error.message : "不明なエラー"}`)
-    } finally {
-      setIsSendingChat(false)
-    }
-  }
-
   // 画面共有を開始する関数
   const startScreenShare = async (): Promise<MediaStream> => {
     try {
@@ -628,7 +595,6 @@ export default function AIVisionChat() {
 
       return mediaStream
     } catch (error) {
-      // モバイルでの画面共有エラーに対する特別なメッセージ
       if (isMobile) {
         console.error("Mobile screen sharing error:", error)
         throw new Error(
@@ -713,13 +679,6 @@ export default function AIVisionChat() {
           throw new Error("画面共有がサポートされていません。カメラモードを選択してください。")
         }
 
-        if (isMobile && !capabilities.mobileScreenShare) {
-          addMessage(
-            "system",
-            "⚠️ お使いのモバイルデバイスでは画面共有機能が制限されている可能性があります。問題が発生した場合はカメラモードをお試しください。",
-          )
-        }
-
         try {
           mediaStream = await startScreenShare()
           addMessage("system", "✅ 画面共有を開始しました。")
@@ -791,24 +750,13 @@ export default function AIVisionChat() {
         }, Number.parseFloat(frequency) * 1000)
 
         const currentPromptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
-        addMessage(
-          "system",
-          `${getLocalizedText("periodicAnalysisStarted", interfaceLanguage).replace(
-            "{frequency}",
-            frequency,
-          )} (${currentPromptName}モード)`,
-        )
+        addMessage("system", `${frequency}秒間隔で画像解析を開始します。 (${currentPromptName}モード)`)
       } else {
-        addMessage("system", getLocalizedText("noPeriodicAnalysis", interfaceLanguage))
+        addMessage("system", "定期解析なしで開始しました。手動で解析を実行できます。")
       }
     } catch (error) {
       console.error("キャプチャ開始エラー:", error)
       addMessage("system", `❌ ${error instanceof Error ? error.message : "キャプチャの開始に失敗しました。"}`)
-
-      // No automatic fallback - user must manually select camera mode
-      if (captureMode === "screen") {
-        addMessage("system", "💡 画面共有に問題がある場合は、カメラモードを手動で選択してください。")
-      }
     }
   }
 
@@ -950,9 +898,18 @@ export default function AIVisionChat() {
 
       const base64Data = await captureCurrentFrame()
 
+      // Search RAG documents for relevant information
+      const ragContext = searchRAGDocuments(userMessage)
+
+      // Enhance system prompt with RAG context if available
+      let enhancedSystemPrompt = systemPrompt
+      if (ragContext) {
+        enhancedSystemPrompt += `\n\n【参考情報】\n以下の情報も参考にして回答してください：\n${ragContext}`
+      }
+
       const requestBody: any = {
         prompt: userMessage,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: enhancedSystemPrompt,
         mimeType: "image/jpeg",
       }
 
@@ -975,7 +932,8 @@ export default function AIVisionChat() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("ai", result.response, false, false, !!base64Data, "システムプロンプト")
+        const responsePrefix = ragContext ? "[RAG強化] " : ""
+        addMessage("ai", `${responsePrefix}${result.response}`, false, false, !!base64Data, "システムプロンプト")
 
         if (result.response && isTTSEnabled) {
           speakText(result.response)
@@ -1036,39 +994,6 @@ export default function AIVisionChat() {
     }
   }
 
-  const toggleVoiceMode = () => {
-    if (!capabilities.speechRecognition) {
-      addMessage("system", "❌ 音声認識がサポートされていません。")
-      return
-    }
-
-    if (isVoiceMode) {
-      setIsVoiceMode(false)
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop()
-        } catch (error) {
-          console.error("Error stopping speech recognition:", error)
-        }
-      }
-      addMessage("system", "🔇 音声入力を終了しました。")
-    } else {
-      setIsVoiceMode(true)
-      if (recognitionRef.current && !isListening) {
-        try {
-          recognitionRef.current.start()
-        } catch (error) {
-          console.error("Error starting speech recognition:", error)
-          addMessage("system", "❌ 音声認識の開始に失敗しました。ブラウザの設定を確認してください。")
-        }
-      }
-      addMessage(
-        "system",
-        "🎤 音声入力を開始しました。「画面共有」「カメラ」「停止」などの音声コマンドが利用できます。",
-      )
-    }
-  }
-
   const toggleListening = () => {
     if (!recognitionRef.current) {
       addMessage("system", "❌ 音声認識がサポートされていません。")
@@ -1121,12 +1046,19 @@ export default function AIVisionChat() {
         addMessage("system", "⚠️ 画面共有が利用できません。カメラモードを使用してください。")
         return
       }
-
-      if (isMobile && !capabilities.mobileScreenShare) {
-        addMessage("system", "⚠️ お使いのモバイルデバイスでは画面共有機能が制限されている可能性があります。")
-      }
     }
     setCaptureMode(value)
+  }
+
+  const saveSystemPrompt = () => {
+    setSystemPrompt(tempSystemPrompt)
+    addMessage("system", "✅ システムプロンプトを保存しました。")
+  }
+
+  const resetSystemPrompt = () => {
+    setTempSystemPrompt(DEFAULT_SYSTEM_PROMPT)
+    setSystemPrompt(DEFAULT_SYSTEM_PROMPT)
+    addMessage("system", "🔄 システムプロンプトをデフォルトに戻しました。")
   }
 
   // API状態
@@ -1136,367 +1068,317 @@ export default function AIVisionChat() {
     message: string
   }>({ gemini: false, tts: false, message: "設定を確認中..." })
 
-  // Localization function
-  const getLocalizedText = (key: string, lang: string) => {
-    const translations: Record<string, Record<string, string>> = {
-      periodicAnalysisStarted: {
-        ja: "{frequency}秒間隔で画像解析を開始します。音声コマンドも利用可能です。",
-        en: "Starting image analysis at {frequency} second intervals. Voice commands are also available.",
-        zh: "开始每{frequency}秒进行一次图像分析。语音命令也可用。",
-        ko: "{frequency}초 간격으로 이미지 분석을 시작합니다. 음성 명령도 사용 가능합니다.",
-      },
-      noPeriodicAnalysis: {
-        ja: "定期解析なしで開始しました。手動で解析を実行できます。",
-        en: "Started without periodic analysis. You can run analysis manually.",
-        zh: "已开始，无定期分析。您可以手动运行分析。",
-        ko: "정기 분석 없이 시작되었습니다. 수동으로 분석을 실행할 수 있습니다.",
-      },
-      realTimeChat: {
-        ja: "リアルタイムチャット",
-        en: "Real-time Chat",
-        zh: "实时聊天",
-        ko: "실시간 채팅",
-      },
-      enterMessage: {
-        ja: "メッセージを入力してください... (Enterで送信、Shift+Enterで改行)",
-        en: "Enter your message... (Enter to send, Shift+Enter for new line)",
-        zh: "输入您的消息... (按Enter发送，Shift+Enter换行)",
-        ko: "메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)",
-      },
-      sending: {
-        ja: "送信中...",
-        en: "Sending...",
-        zh: "发送中...",
-        ko: "전송 중...",
-      },
-      processing: {
-        ja: "処理中...",
-        en: "Processing...",
-        zh: "处理中...",
-        ko: "처리 중...",
-      },
-      analyzeNow: {
-        ja: "今すぐ解析",
-        en: "Analyze Now",
-        zh: "立即分析",
-        ko: "지금 분석",
-      },
-      stop: {
-        ja: "停止",
-        en: "Stop",
-        zh: "停止",
-        ko: "중지",
-      },
-      start: {
-        ja: "開始",
-        en: "Start",
-        zh: "开始",
-        ko: "시작",
-      },
-      camera: {
-        ja: "カメラ",
-        en: "Camera",
-        zh: "相机",
-        ko: "카메라",
-      },
-      screenShare: {
-        ja: "画面共有",
-        en: "Screen Share",
-        zh: "屏幕共享",
-        ko: "화면 공유",
-      },
-      captureMode: {
-        ja: "キャプチャモード",
-        en: "Capture Mode",
-        zh: "捕获模式",
-        ko: "캡처 모드",
-      },
-      periodicPrompt: {
-        ja: "定期解析プロンプト",
-        en: "Periodic Analysis Prompt",
-        zh: "定期分析提示",
-        ko: "정기 분석 프롬프트",
-      },
-      captureFrequency: {
-        ja: "キャプチャ頻度",
-        en: "Capture Frequency",
-        zh: "捕获频率",
-        ko: "캡처 빈도",
-      },
-      languageSettings: {
-        ja: "言語設定",
-        en: "Language Settings",
-        zh: "语言设置",
-        ko: "언어 설정",
-      },
-      noPeriodicAnalysisOption: {
-        ja: "定期解析なし",
-        en: "No periodic analysis",
-        zh: "无定期分析",
-        ko: "정기 분석 없음",
-      },
-      seconds: {
-        ja: "秒",
-        en: "seconds",
-        zh: "秒",
-        ko: "초",
-      },
-    }
-
-    return translations[key]?.[lang] || translations[key]?.["en"] || key
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50 p-2 sm:p-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Mobile Layout */}
-        <div className="block lg:hidden space-y-4">
-          {/* Mobile Header */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Camera className="w-5 h-5" />
-                AI Vision Chat
-              </CardTitle>
-            </CardHeader>
-          </Card>
+    <div className="min-h-screen bg-gray-50">
+      {/* Mobile Layout */}
+      {isMobile ? (
+        <div className="flex flex-col h-screen">
+          {/* Mobile Header with Settings */}
+          <div className="bg-white border-b p-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Camera className="w-5 h-5" />
+              <span className="font-semibold">AI Vision Chat</span>
+            </div>
+            <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <Settings className="w-4 h-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>設定</DialogTitle>
+                </DialogHeader>
+                <Tabs defaultValue="general" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="general">一般</TabsTrigger>
+                    <TabsTrigger value="prompts">プロンプト</TabsTrigger>
+                    <TabsTrigger value="rag">RAG</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="general" className="space-y-4">
+                    {/* API Status */}
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="flex items-center gap-2">
+                        {apiStatus.gemini && apiStatus.tts ? (
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-yellow-500" />
+                        )}
+                        {apiStatus.message}
+                      </AlertDescription>
+                    </Alert>
+
+                    {/* Capture Mode */}
+                    <div>
+                      <Label className="text-sm font-medium">キャプチャモード</Label>
+                      <RadioGroup
+                        value={captureMode}
+                        onValueChange={handleCaptureModeChange}
+                        className="flex gap-4 mt-2"
+                        disabled={isCapturing}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="camera" id="mobile-camera" disabled={!capabilities.camera} />
+                          <Label htmlFor="mobile-camera" className="text-sm flex items-center gap-1">
+                            <Camera className="w-3 h-3" />
+                            カメラ
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="screen" id="mobile-screen" disabled={!capabilities.screenShare} />
+                          <Label htmlFor="mobile-screen" className="text-sm flex items-center gap-1">
+                            <Monitor className="w-3 h-3" />
+                            画面共有
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+
+                    {/* Analysis Type */}
+                    <div>
+                      <Label className="text-sm font-medium">解析タイプ</Label>
+                      <Select
+                        value={visualAnalysisType}
+                        onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
+                        disabled={isCapturing}
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
+                            <SelectItem key={key} value={key}>
+                              <div className="flex items-center gap-2">
+                                {config.icon}
+                                {config.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Custom Prompt */}
+                    {visualAnalysisType === "custom" && (
+                      <div>
+                        <Label className="text-sm font-medium">カスタムプロンプト</Label>
+                        <Textarea
+                          value={customPrompt}
+                          onChange={(e) => setCustomPrompt(e.target.value)}
+                          placeholder="独自の画像解析プロンプトを入力してください..."
+                          className="mt-2"
+                          disabled={isCapturing}
+                        />
+                      </div>
+                    )}
+
+                    {/* Frequency */}
+                    <div>
+                      <Label className="text-sm font-medium">キャプチャ頻度</Label>
+                      <Select value={frequency} onValueChange={setFrequency} disabled={isCapturing}>
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">定期解析なし</SelectItem>
+                          <SelectItem value="3">3秒</SelectItem>
+                          <SelectItem value="5">5秒</SelectItem>
+                          <SelectItem value="10">10秒</SelectItem>
+                          <SelectItem value="20">20秒</SelectItem>
+                          <SelectItem value="30">30秒</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Language Settings */}
+                    <div>
+                      <Label className="text-sm font-medium">言語設定</Label>
+                      <Select
+                        value={interfaceLanguage}
+                        onValueChange={(value) => {
+                          setInterfaceLanguage(value)
+                          switch (value) {
+                            case "ja":
+                              setVoiceLanguage("ja-JP")
+                              break
+                            case "en":
+                              setVoiceLanguage("en-US")
+                              break
+                            case "zh":
+                              setVoiceLanguage("zh-CN")
+                              break
+                            case "ko":
+                              setVoiceLanguage("ko-KR")
+                              break
+                            default:
+                              setVoiceLanguage("ja-JP")
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ja">日本語</SelectItem>
+                          <SelectItem value="en">English</SelectItem>
+                          <SelectItem value="zh">中文</SelectItem>
+                          <SelectItem value="ko">한국어</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="prompts" className="space-y-4">
+                    <div>
+                      <Label className="text-sm font-medium">システムプロンプト</Label>
+                      <Textarea
+                        value={tempSystemPrompt}
+                        onChange={(e) => setTempSystemPrompt(e.target.value)}
+                        placeholder="システムプロンプトを入力してください..."
+                        className="mt-2 min-h-[200px]"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <Button onClick={saveSystemPrompt} size="sm">
+                          <Save className="w-3 h-3 mr-1" />
+                          保存
+                        </Button>
+                        <Button onClick={resetSystemPrompt} variant="outline" size="sm">
+                          <RotateCcw className="w-3 h-3 mr-1" />
+                          リセット
+                        </Button>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="rag" className="space-y-4">
+                    <div>
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <Database className="w-4 h-4" />
+                        RAG文書管理
+                      </Label>
+
+                      {/* Add new document */}
+                      <div className="space-y-2 mt-2">
+                        <Input
+                          value={newDocTitle}
+                          onChange={(e) => setNewDocTitle(e.target.value)}
+                          placeholder="文書タイトル"
+                        />
+                        <Select value={newDocCategory} onValueChange={setNewDocCategory}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="FAQ">FAQ</SelectItem>
+                            <SelectItem value="製品情報">製品情報</SelectItem>
+                            <SelectItem value="手順書">手順書</SelectItem>
+                            <SelectItem value="その他">その他</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Textarea
+                          value={newDocContent}
+                          onChange={(e) => setNewDocContent(e.target.value)}
+                          placeholder="文書内容"
+                          className="min-h-[80px]"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={addRAGDocument}
+                            size="sm"
+                            disabled={!newDocTitle.trim() || !newDocContent.trim()}
+                          >
+                            追加
+                          </Button>
+                          <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
+                            <Upload className="w-3 h-3 mr-1" />
+                            ファイル
+                          </Button>
+                        </div>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".txt,.csv"
+                          onChange={loadRAGFromFile}
+                          className="hidden"
+                        />
+                      </div>
+
+                      {/* Document list */}
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                        {ragDocuments.map((doc) => (
+                          <div key={doc.id} className="p-2 border rounded text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">
+                                [{doc.category}] {doc.title}
+                              </span>
+                              <Button
+                                onClick={() => removeRAGDocument(doc.id)}
+                                variant="ghost"
+                                size="sm"
+                                className="h-4 w-4 p-0"
+                              >
+                                ×
+                              </Button>
+                            </div>
+                            <p className="text-gray-600 truncate">{doc.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </DialogContent>
+            </Dialog>
+          </div>
 
           {/* Mobile Chat Area */}
-          <Card className="flex flex-col" style={{ height: "60vh" }}>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <MessageSquare className="w-4 h-4" />
-                顧客サポートチャット
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col flex-grow p-3 pt-0">
-              <ScrollArea className="flex-grow pr-2 mb-3">
-                <div className="space-y-3">
-                  {messages.map((message) => (
+          <div className="flex-1 flex flex-col bg-white">
+            <ScrollArea className="flex-1 p-3">
+              <div className="space-y-3">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.type === "user" || message.type === "voice" ? "justify-end" : "justify-start"}`}
+                  >
                     <div
-                      key={message.id}
-                      className={`flex ${message.type === "user" || message.type === "voice" ? "justify-end" : "justify-start"}`}
+                      className={`max-w-[85%] p-2 rounded-lg text-sm ${
+                        message.type === "user"
+                          ? "bg-blue-500 text-white"
+                          : message.type === "voice"
+                            ? "bg-purple-500 text-white"
+                            : message.type === "system"
+                              ? "bg-gray-100 text-gray-700 border"
+                              : message.isPeriodicAnalysis
+                                ? "bg-purple-100 text-purple-800 border border-purple-200"
+                                : "bg-green-100 text-green-800"
+                      }`}
                     >
-                      <div
-                        className={`max-w-[85%] p-2 rounded-lg text-sm ${
-                          message.type === "user"
-                            ? "bg-blue-500 text-white"
-                            : message.type === "voice"
-                              ? "bg-purple-500 text-white"
-                              : message.type === "system"
-                                ? "bg-gray-100 text-gray-700 border"
-                                : message.isPeriodicAnalysis
-                                  ? "bg-purple-100 text-purple-800 border border-purple-200"
-                                  : "bg-green-100 text-green-800"
-                        }`}
-                      >
-                        <p className="text-xs whitespace-pre-wrap leading-relaxed">{message.content}</p>
-                        <div className="flex items-center justify-between mt-1">
-                          <p className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</p>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {message.isVoiceInput && (
-                              <span className="text-xs bg-purple-200 text-purple-700 px-1 py-0.5 rounded">音声</span>
-                            )}
-                            {message.isPeriodicAnalysis && (
-                              <span className="text-xs bg-purple-200 text-purple-700 px-1 py-0.5 rounded">定期</span>
-                            )}
-                            {message.hasImage && (
-                              <span className="text-xs bg-blue-200 text-blue-700 px-1 py-0.5 rounded">画像</span>
-                            )}
-                          </div>
+                      <p className="text-xs whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</p>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {message.isVoiceInput && (
+                            <span className="text-xs bg-purple-200 text-purple-700 px-1 py-0.5 rounded">音声</span>
+                          )}
+                          {message.isPeriodicAnalysis && (
+                            <span className="text-xs bg-purple-200 text-purple-700 px-1 py-0.5 rounded">定期</span>
+                          )}
+                          {message.hasImage && (
+                            <span className="text-xs bg-blue-200 text-blue-700 px-1 py-0.5 rounded">画像</span>
+                          )}
                         </div>
                       </div>
                     </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-
-              {/* Mobile Chat Input - Always visible and fixed at bottom */}
-              <div className="border-t pt-3 relative z-10">
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Textarea
-                      ref={chatInputRef}
-                      value={chatMessage}
-                      onChange={(e) => setChatMessage(e.target.value)}
-                      onKeyPress={handleChatKeyPress}
-                      placeholder="メッセージを入力..."
-                      className="flex-1 min-h-[40px] max-h-[80px] text-sm pr-8"
-                      disabled={isSendingChat}
-                    />
-                    {capabilities.speechRecognition && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={toggleListening}
-                        className="absolute right-1 bottom-1 h-6 w-6 p-0"
-                      >
-                        {isListening ? (
-                          <Mic className="w-3 h-3 text-gray-500" />
-                        ) : (
-                          <MicOff className="w-3 h-3 text-red-500" />
-                        )}
-                      </Button>
-                    )}
                   </div>
-                  <Button
-                    onClick={sendChatMessage}
-                    disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
-                    size="sm"
-                    className="h-auto px-3"
-                  >
-                    <Send className="w-3 h-3" />
-                  </Button>
-                </div>
+                ))}
+                <div ref={messagesEndRef} />
               </div>
-            </CardContent>
-          </Card>
+            </ScrollArea>
 
-          {/* Mobile Controls - Collapsible */}
-          <Card>
-            <CardContent className="p-3 space-y-4">
-              {/* API Status */}
-              <Alert className="py-2">
-                <AlertCircle className="h-3 w-3" />
-                <AlertDescription className="text-xs flex items-center gap-2">
-                  {apiStatus.gemini && apiStatus.tts ? (
-                    <CheckCircle className="w-3 h-3 text-green-500" />
-                  ) : (
-                    <AlertCircle className="w-3 h-3 text-yellow-500" />
-                  )}
-                  <span className="truncate">{apiStatus.message}</span>
-                </AlertDescription>
-              </Alert>
-
-              {/* Voice Mode Toggle */}
-              {capabilities.speechRecognition && (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">音声入力</span>
-                  <Button variant={isVoiceMode ? "destructive" : "outline"} size="sm" onClick={toggleVoiceMode}>
-                    {isVoiceMode ? (
-                      <Mic className="w-3 h-3 text-gray-500" />
-                    ) : (
-                      <MicOff className="w-3 h-3 text-red-500" />
-                    )}
-                  </Button>
-                </div>
-              )}
-
-              {/* Capture Mode */}
-              <div>
-                <Label className="text-sm font-medium">キャプチャモード</Label>
-                <RadioGroup
-                  value={captureMode}
-                  onValueChange={handleCaptureModeChange}
-                  className="flex gap-4 mt-2"
-                  disabled={isCapturing}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="camera" id="mobile-camera" disabled={!capabilities.camera} />
-                    <Label htmlFor="mobile-camera" className="text-sm flex items-center gap-1">
-                      <Camera className="w-3 h-3" />
-                      カメラ
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="screen" id="mobile-screen" disabled={!capabilities.screenShare} />
-                    <Label htmlFor="mobile-screen" className="text-sm flex items-center gap-1">
-                      <Monitor className="w-3 h-3" />
-                      画面共有
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-
-              {/* Camera Switch for Mobile */}
-              {isMobile && capabilities.multipleCameras && captureMode === "camera" && (
-                <Button onClick={toggleCamera} variant="outline" size="sm" className="w-full" disabled={!isCapturing}>
-                  <FlipHorizontal className="w-3 h-3 mr-2" />
-                  {facingMode === "user" ? "リアカメラ" : "フロントカメラ"}
-                </Button>
-              )}
-
-              {/* Analysis Type */}
-              <div>
-                <Label className="text-sm font-medium">解析タイプ</Label>
-                <Select
-                  value={visualAnalysisType}
-                  onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
-                  disabled={isCapturing}
-                >
-                  <SelectTrigger className="mt-2 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
-                      <SelectItem key={key} value={key} className="text-xs">
-                        <div className="flex items-center gap-2">
-                          {config.icon}
-                          {config.name}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Frequency */}
-              <div>
-                <Label className="text-sm font-medium">キャプチャ頻度</Label>
-                <Select value={frequency} onValueChange={setFrequency} disabled={isCapturing}>
-                  <SelectTrigger className="mt-2 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">定期解析なし</SelectItem>
-                    <SelectItem value="3">3秒</SelectItem>
-                    <SelectItem value="5">5秒</SelectItem>
-                    <SelectItem value="10">10秒</SelectItem>
-                    <SelectItem value="20">20秒</SelectItem>
-                    <SelectItem value="30">30秒</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Control Buttons */}
-              <div className="flex gap-2">
-                <Button
-                  onClick={isCapturing ? stopCapture : startCapture}
-                  disabled={
-                    (visualAnalysisType === "custom" && !customPrompt.trim()) ||
-                    (visualAnalysisType !== "custom" && !getCurrentVisualPrompt().trim()) ||
-                    !apiStatus.gemini ||
-                    !apiStatus.tts ||
-                    (!capabilities.camera && !capabilities.screenShare)
-                  }
-                  className="flex-1"
-                  size="sm"
-                >
-                  {isCapturing ? (
-                    <>
-                      <Square className="w-3 h-3 mr-1" />
-                      停止
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3 h-3 mr-1" />
-                      開始
-                    </>
-                  )}
-                </Button>
-                <Button onClick={toggleTTS} variant="outline" size="sm">
-                  {isTTSEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
-                </Button>
-              </div>
-
-              {isCapturing && (
-                <Button onClick={manualCapture} disabled={isProcessing} variant="outline" size="sm" className="w-full">
-                  {isProcessing ? "処理中..." : "今すぐ解析"}
-                </Button>
-              )}
-
-              {/* Video Preview with Error Handling */}
+            {/* Mobile Video Preview - Fixed position */}
+            <div className="p-3 border-t bg-gray-50">
               <div className="relative">
                 {cameraError && (
                   <Alert variant="destructive" className="mb-2 py-1">
@@ -1508,7 +1390,7 @@ export default function AIVisionChat() {
                 <video
                   ref={videoRef}
                   className="w-full rounded-lg bg-black"
-                  style={{ maxHeight: "150px", objectFit: "contain" }}
+                  style={{ height: "120px", objectFit: "cover" }}
                   muted
                   playsInline
                   autoPlay
@@ -1531,290 +1413,13 @@ export default function AIVisionChat() {
                   </div>
                 )}
 
-                {isVoiceMode && (
-                  <div className="absolute top-1 right-1 bg-blue-500 text-white px-1 py-0.5 rounded text-xs flex items-center gap-1">
-                    <Mic className="w-2 h-2" />
-                    音声
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Desktop Layout */}
-        <div className="hidden lg:grid lg:grid-cols-3 gap-6">
-          {/* Left Panel - Desktop */}
-          <Card className="lg:col-span-1 self-start sticky top-4">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Camera className="w-5 h-5" />
-                AI Vision Chat
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* API状態表示 */}
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription className="flex items-center gap-2">
-                  {apiStatus.gemini && apiStatus.tts ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-yellow-500" />
+                {/* Control buttons overlay */}
+                <div className="absolute bottom-1 right-1 flex gap-1">
+                  {isMobile && capabilities.multipleCameras && captureMode === "camera" && isCapturing && (
+                    <Button onClick={toggleCamera} variant="secondary" size="sm" className="h-6 px-2 text-xs">
+                      <FlipHorizontal className="w-3 h-3" />
+                    </Button>
                   )}
-                  {apiStatus.message}
-                </AlertDescription>
-              </Alert>
-
-              {/* 音声入力状態 */}
-              {capabilities.speechRecognition && (
-                <Alert>
-                  <Headphones className="h-4 w-4" />
-                  <AlertDescription>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">
-                        音声入力: {isVoiceMode ? "有効" : "無効"}
-                        {isListening && " (聞き取り中...)"}
-                      </span>
-                      <Button variant={isVoiceMode ? "destructive" : "outline"} size="sm" onClick={toggleVoiceMode}>
-                        {isVoiceMode ? (
-                          <Mic className="w-3 h-3 text-gray-500" />
-                        ) : (
-                          <MicOff className="w-3 h-3 text-red-500" />
-                        )}
-                      </Button>
-                    </div>
-                    {interimTranscript && (
-                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs">認識中: "{interimTranscript}"</div>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* 言語設定 */}
-              {capabilities.speechRecognition && (
-                <div>
-                  <Label className="text-base font-medium flex items-center gap-2">
-                    <Settings className="w-4 h-4" />
-                    {getLocalizedText("languageSettings", interfaceLanguage)}
-                  </Label>
-                  <div className="space-y-2 mt-2">
-                    <Select
-                      value={interfaceLanguage}
-                      onValueChange={(value) => {
-                        setInterfaceLanguage(value)
-                        switch (value) {
-                          case "ja":
-                            setVoiceLanguage("ja-JP")
-                            break
-                          case "en":
-                            setVoiceLanguage("en-US")
-                            break
-                          case "zh":
-                            setVoiceLanguage("zh-CN")
-                            break
-                          case "ko":
-                            setVoiceLanguage("ko-KR")
-                            break
-                          default:
-                            setVoiceLanguage("ja-JP")
-                        }
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ja">日本語</SelectItem>
-                        <SelectItem value="en">English</SelectItem>
-                        <SelectItem value="zh">中文</SelectItem>
-                        <SelectItem value="ko">한국어</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-
-              {/* 機能サポート状況 */}
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="text-sm">
-                    <div className="font-medium mb-2">機能状況:</div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Camera className="w-3 h-3" />
-                        <span className={capabilities.camera ? "text-green-600" : "text-red-600"}>
-                          カメラ: {capabilities.camera ? "利用可能" : "利用不可"}
-                          {capabilities.camera && capabilities.multipleCameras && " (複数カメラ対応)"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Monitor className="w-3 h-3" />
-                        <span className={capabilities.screenShare ? "text-green-600" : "text-red-600"}>
-                          画面共有: {capabilities.screenShare ? "利用可能" : "利用不可"}
-                          {capabilities.screenShare && isMobile && !capabilities.mobileScreenShare && " (制限あり)"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Mic className="w-3 h-3" />
-                        <span className={capabilities.speechRecognition ? "text-green-600" : "text-red-600"}>
-                          音声認識: {capabilities.speechRecognition ? "利用可能" : "利用不可"}
-                        </span>
-                      </div>
-                      {isMobile && (
-                        <div className="flex items-center gap-2">
-                          <Smartphone className="w-3 h-3" />
-                          <span className="text-blue-600">モバイルデバイス検出済み</span>
-                        </div>
-                      )}
-                    </div>
-                    {capabilities.speechRecognition && (
-                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs">
-                        💡 音声コマンド: 「画面共有」「カメラ」「停止」「音声入力終了」
-                        {capabilities.multipleCameras && "「カメラ切替」"}
-                      </div>
-                    )}
-                  </div>
-                </AlertDescription>
-              </Alert>
-
-              {/* キャプチャモード選択 */}
-              <div>
-                <Label className="text-base font-medium">{getLocalizedText("captureMode", interfaceLanguage)}</Label>
-                <RadioGroup
-                  value={captureMode}
-                  onValueChange={handleCaptureModeChange}
-                  className="flex gap-6 mt-2"
-                  disabled={isCapturing}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="camera" id="camera" disabled={!capabilities.camera} />
-                    <Label
-                      htmlFor="camera"
-                      className={`flex items-center gap-2 ${!capabilities.camera ? "opacity-50" : ""}`}
-                    >
-                      <Camera className="w-4 h-4" />
-                      {getLocalizedText("camera", interfaceLanguage)}
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="screen" id="screen" disabled={!capabilities.screenShare} />
-                    <Label
-                      htmlFor="screen"
-                      className={`flex items-center gap-2 ${!capabilities.screenShare ? "opacity-50" : ""}`}
-                    >
-                      <Monitor className="w-4 h-4" />
-                      {getLocalizedText("screenShare", interfaceLanguage)}
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-
-              {/* カメラ切り替えボタン (モバイルかつ複数カメラがある場合のみ表示) */}
-              {isMobile && capabilities.multipleCameras && captureMode === "camera" && (
-                <div>
-                  <Button
-                    onClick={toggleCamera}
-                    variant="outline"
-                    className="w-full"
-                    disabled={!capabilities.multipleCameras || isCapturing === false}
-                  >
-                    <FlipHorizontal className="w-4 h-4 mr-2" />
-                    {facingMode === "user" ? "リアカメラに切替" : "フロントカメラに切替"}
-                  </Button>
-                </div>
-              )}
-
-              {/* 画像解析プロンプト選択 */}
-              <div>
-                <Label className="text-base font-medium flex items-center gap-2">
-                  <Eye className="w-4 h-4" />
-                  画像解析プロンプト
-                </Label>
-                <Select
-                  value={visualAnalysisType}
-                  onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
-                  disabled={isCapturing}
-                >
-                  <SelectTrigger className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
-                      <SelectItem key={key} value={key}>
-                        <div className="flex items-center gap-2">
-                          {config.icon}
-                          <div>
-                            <div className="font-medium">{config.name}</div>
-                            <div className="text-xs text-gray-500">{config.description}</div>
-                          </div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* 選択されたプロンプトの説明 */}
-                <div className="mt-2 p-3 bg-blue-50 rounded-lg text-sm">
-                  <div className="flex items-center gap-2 font-medium text-blue-800 mb-1">
-                    {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].icon}
-                    {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
-                  </div>
-                  <div className="text-blue-700 text-xs mb-2">
-                    {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].description}
-                  </div>
-                  {visualAnalysisType !== "custom" && (
-                    <div className="text-blue-600 text-xs bg-white p-2 rounded border">
-                      {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].prompt}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* カスタムプロンプト入力 */}
-              {visualAnalysisType === "custom" && (
-                <div>
-                  <Label htmlFor="customPrompt" className="text-base font-medium flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    カスタムプロンプト
-                  </Label>
-                  <Textarea
-                    id="customPrompt"
-                    value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder="独自の画像解析プロンプトを入力してください..."
-                    className="mt-2 min-h-[80px]"
-                    disabled={isCapturing}
-                  />
-                </div>
-              )}
-
-              {/* キャプチャ頻度 */}
-              <div>
-                <Label className="text-base font-medium">
-                  {getLocalizedText("captureFrequency", interfaceLanguage)}
-                </Label>
-                <Select value={frequency} onValueChange={setFrequency} disabled={isCapturing}>
-                  <SelectTrigger className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">{getLocalizedText("noPeriodicAnalysisOption", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="0.5">0.5 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="1">1 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="3">3 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="5">5 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="10">10 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="20">20 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                    <SelectItem value="30">30 {getLocalizedText("seconds", interfaceLanguage)}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* コントロールボタン */}
-              <div className="space-y-2">
-                <div className="flex gap-2">
                   <Button
                     onClick={isCapturing ? stopCapture : startCapture}
                     disabled={
@@ -1824,197 +1429,581 @@ export default function AIVisionChat() {
                       !apiStatus.tts ||
                       (!capabilities.camera && !capabilities.screenShare)
                     }
-                    className="flex-1"
-                    size="lg"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
                   >
                     {isCapturing ? (
                       <>
-                        <Square className="w-4 h-4 mr-2" />
-                        {getLocalizedText("stop", interfaceLanguage)}
+                        <Square className="w-3 h-3 mr-1" />
+                        停止
                       </>
                     ) : (
                       <>
-                        <Play className="w-4 h-4 mr-2" />
-                        {getLocalizedText("start", interfaceLanguage)}
+                        <Play className="w-3 h-3 mr-1" />
+                        開始
                       </>
                     )}
                   </Button>
-
-                  <Button onClick={toggleTTS} variant="outline" size="lg">
-                    {isTTSEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                  {isCapturing && (
+                    <Button
+                      onClick={manualCapture}
+                      disabled={isProcessing}
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                    >
+                      解析
+                    </Button>
+                  )}
+                  <Button onClick={toggleTTS} variant="outline" size="sm" className="h-6 px-2">
+                    {isTTSEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
                   </Button>
                 </div>
-
-                {isCapturing && Number.parseFloat(frequency) >= 0 && (
-                  <Button onClick={manualCapture} disabled={isProcessing} variant="outline" className="w-full">
-                    {isProcessing
-                      ? getLocalizedText("processing", interfaceLanguage)
-                      : getLocalizedText("analyzeNow", interfaceLanguage)}
-                  </Button>
-                )}
               </div>
+            </div>
 
-              {/* ビデオプレビュー with Error Handling */}
-              <div className="relative">
-                {cameraError && (
-                  <Alert variant="destructive" className="mb-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription className="text-sm">{cameraError}</AlertDescription>
-                  </Alert>
-                )}
-
-                <video
-                  ref={videoRef}
-                  className="w-full rounded-lg bg-black"
-                  style={{ maxHeight: "200px", objectFit: "contain" }}
-                  muted
-                  playsInline
-                  autoPlay
-                />
-                <canvas ref={canvasRef} className="hidden" />
-
-                {isProcessing && (
-                  <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                    <div className="text-white text-sm">解析中...</div>
-                  </div>
-                )}
-
-                {isCapturing && (
-                  <div className="absolute top-2 left-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
-                    {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
-                    {captureMode === "camera" &&
-                      isMobile &&
-                      capabilities.multipleCameras &&
-                      ` (${facingMode === "user" ? "フロント" : "リア"})`}
-                  </div>
-                )}
-
-                {isVoiceMode && (
-                  <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
-                    <Mic className="w-3 h-3" />
-                    音声入力
-                  </div>
-                )}
-
-                {isCapturing && (
-                  <div className="absolute bottom-2 left-2 bg-purple-500 text-white px-2 py-1 rounded text-xs">
-                    {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Right Panel - Desktop Chat */}
-          <Card className="lg:col-span-2 flex flex-col" style={{ minHeight: "calc(100vh - 2rem)" }}>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5" />
-                顧客サポートチャット
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col flex-grow p-4 pt-0">
-              <ScrollArea className="flex-grow pr-4 mb-4">
-                <div className="space-y-4">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.type === "user" || message.type === "voice" ? "justify-end" : "justify-start"}`}
+            {/* Mobile Chat Input - Fixed at bottom */}
+            <div className="p-3 border-t bg-white">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Textarea
+                    ref={chatInputRef}
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    onKeyPress={handleChatKeyPress}
+                    placeholder={interimTranscript || "メッセージを入力..."}
+                    className="flex-1 min-h-[40px] max-h-[80px] text-sm pr-8 resize-none"
+                    disabled={isSendingChat}
+                  />
+                  {capabilities.speechRecognition && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleListening}
+                      className={`absolute right-1 bottom-1 h-6 w-6 p-0 ${isListening ? "bg-red-100" : ""}`}
                     >
-                      <div
-                        className={`max-w-[80%] p-3 rounded-lg ${
-                          message.type === "user"
-                            ? "bg-blue-500 text-white"
-                            : message.type === "voice"
-                              ? "bg-purple-500 text-white"
-                              : message.type === "system"
-                                ? "bg-gray-100 text-gray-700 border"
-                                : message.isPeriodicAnalysis
-                                  ? "bg-purple-100 text-purple-800 border border-purple-200"
-                                  : "bg-green-100 text-green-800"
-                        }`}
+                      {isListening ? (
+                        <Mic className="w-3 h-3 text-red-500" />
+                      ) : (
+                        <MicOff className="w-3 h-3 text-gray-500" />
+                      )}
+                    </Button>
+                  )}
+                </div>
+                <Button
+                  onClick={sendChatMessage}
+                  disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
+                  size="sm"
+                  className="h-auto px-3"
+                >
+                  <Send className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Desktop Layout */
+        <div className="p-4">
+          <div className="max-w-7xl mx-auto grid grid-cols-3 gap-6">
+            {/* Left Panel - Desktop Settings */}
+            <Card className="col-span-1 self-start sticky top-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Camera className="w-5 h-5" />
+                  AI Vision Chat
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <Tabs defaultValue="general" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="general">一般</TabsTrigger>
+                    <TabsTrigger value="prompts">プロンプト</TabsTrigger>
+                    <TabsTrigger value="rag">RAG</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="general" className="space-y-4">
+                    {/* API Status */}
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="flex items-center gap-2">
+                        {apiStatus.gemini && apiStatus.tts ? (
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-yellow-500" />
+                        )}
+                        {apiStatus.message}
+                      </AlertDescription>
+                    </Alert>
+
+                    {/* Capture Mode */}
+                    <div>
+                      <Label className="text-base font-medium">キャプチャモード</Label>
+                      <RadioGroup
+                        value={captureMode}
+                        onValueChange={handleCaptureModeChange}
+                        className="flex gap-6 mt-2"
+                        disabled={isCapturing}
                       >
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        <div className="flex items-center justify-between mt-1">
-                          <p className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</p>
-                          <div className="flex items-center gap-1">
-                            {message.isVoiceInput && (
-                              <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">音声入力</span>
-                            )}
-                            {message.isPeriodicAnalysis && (
-                              <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">定期解析</span>
-                            )}
-                            {message.hasImage && (
-                              <span className="text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">画像付き</span>
-                            )}
-                            {message.promptType && (
-                              <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
-                                {message.promptType}
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="camera" id="camera" disabled={!capabilities.camera} />
+                          <Label
+                            htmlFor="camera"
+                            className={`flex items-center gap-2 ${!capabilities.camera ? "opacity-50" : ""}`}
+                          >
+                            <Camera className="w-4 h-4" />
+                            カメラ
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="screen" id="screen" disabled={!capabilities.screenShare} />
+                          <Label
+                            htmlFor="screen"
+                            className={`flex items-center gap-2 ${!capabilities.screenShare ? "opacity-50" : ""}`}
+                          >
+                            <Monitor className="w-4 h-4" />
+                            画面共有
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+
+                    {/* Camera Switch for Mobile */}
+                    {isMobile && capabilities.multipleCameras && captureMode === "camera" && (
+                      <div>
+                        <Button
+                          onClick={toggleCamera}
+                          variant="outline"
+                          className="w-full"
+                          disabled={!capabilities.multipleCameras || isCapturing === false}
+                        >
+                          <FlipHorizontal className="w-4 h-4 mr-2" />
+                          {facingMode === "user" ? "リアカメラに切替" : "フロントカメラに切替"}
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Analysis Type */}
+                    <div>
+                      <Label className="text-base font-medium flex items-center gap-2">
+                        <Eye className="w-4 h-4" />
+                        画像解析プロンプト
+                      </Label>
+                      <Select
+                        value={visualAnalysisType}
+                        onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
+                        disabled={isCapturing}
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
+                            <SelectItem key={key} value={key}>
+                              <div className="flex items-center gap-2">
+                                {config.icon}
+                                <div>
+                                  <div className="font-medium">{config.name}</div>
+                                  <div className="text-xs text-gray-500">{config.description}</div>
+                                </div>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Custom Prompt */}
+                    {visualAnalysisType === "custom" && (
+                      <div>
+                        <Label htmlFor="customPrompt" className="text-base font-medium flex items-center gap-2">
+                          <FileText className="w-4 h-4" />
+                          カスタムプロンプト
+                        </Label>
+                        <Textarea
+                          id="customPrompt"
+                          value={customPrompt}
+                          onChange={(e) => setCustomPrompt(e.target.value)}
+                          placeholder="独自の画像解析プロンプトを入力してください..."
+                          className="mt-2 min-h-[80px]"
+                          disabled={isCapturing}
+                        />
+                      </div>
+                    )}
+
+                    {/* Frequency */}
+                    <div>
+                      <Label className="text-base font-medium">キャプチャ頻度</Label>
+                      <Select value={frequency} onValueChange={setFrequency} disabled={isCapturing}>
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">定期解析なし</SelectItem>
+                          <SelectItem value="0.5">0.5秒</SelectItem>
+                          <SelectItem value="1">1秒</SelectItem>
+                          <SelectItem value="3">3秒</SelectItem>
+                          <SelectItem value="5">5秒</SelectItem>
+                          <SelectItem value="10">10秒</SelectItem>
+                          <SelectItem value="20">20秒</SelectItem>
+                          <SelectItem value="30">30秒</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Language Settings */}
+                    <div>
+                      <Label className="text-base font-medium flex items-center gap-2">
+                        <Settings className="w-4 h-4" />
+                        言語設定
+                      </Label>
+                      <Select
+                        value={interfaceLanguage}
+                        onValueChange={(value) => {
+                          setInterfaceLanguage(value)
+                          switch (value) {
+                            case "ja":
+                              setVoiceLanguage("ja-JP")
+                              break
+                            case "en":
+                              setVoiceLanguage("en-US")
+                              break
+                            case "zh":
+                              setVoiceLanguage("zh-CN")
+                              break
+                            case "ko":
+                              setVoiceLanguage("ko-KR")
+                              break
+                            default:
+                              setVoiceLanguage("ja-JP")
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ja">日本語</SelectItem>
+                          <SelectItem value="en">English</SelectItem>
+                          <SelectItem value="zh">中文</SelectItem>
+                          <SelectItem value="ko">한국어</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Control Buttons */}
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={isCapturing ? stopCapture : startCapture}
+                          disabled={
+                            (visualAnalysisType === "custom" && !customPrompt.trim()) ||
+                            (visualAnalysisType !== "custom" && !getCurrentVisualPrompt().trim()) ||
+                            !apiStatus.gemini ||
+                            !apiStatus.tts ||
+                            (!capabilities.camera && !capabilities.screenShare)
+                          }
+                          className="flex-1"
+                          size="lg"
+                        >
+                          {isCapturing ? (
+                            <>
+                              <Square className="w-4 h-4 mr-2" />
+                              停止
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-4 h-4 mr-2" />
+                              開始
+                            </>
+                          )}
+                        </Button>
+
+                        <Button onClick={toggleTTS} variant="outline" size="lg">
+                          {isTTSEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                        </Button>
+                      </div>
+
+                      {isCapturing && Number.parseFloat(frequency) >= 0 && (
+                        <Button onClick={manualCapture} disabled={isProcessing} variant="outline" className="w-full">
+                          {isProcessing ? "処理中..." : "今すぐ解析"}
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Video Preview */}
+                    <div className="relative">
+                      {cameraError && (
+                        <Alert variant="destructive" className="mb-2">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription className="text-sm">{cameraError}</AlertDescription>
+                        </Alert>
+                      )}
+
+                      <video
+                        ref={videoRef}
+                        className="w-full rounded-lg bg-black"
+                        style={{ maxHeight: "200px", objectFit: "contain" }}
+                        muted
+                        playsInline
+                        autoPlay
+                      />
+                      <canvas ref={canvasRef} className="hidden" />
+
+                      {isProcessing && (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                          <div className="text-white text-sm">解析中...</div>
+                        </div>
+                      )}
+
+                      {isCapturing && (
+                        <div className="absolute top-2 left-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
+                          {captureMode === "screen" ? "画面共有中" : "カメラ撮影中"}
+                          {captureMode === "camera" &&
+                            isMobile &&
+                            capabilities.multipleCameras &&
+                            ` (${facingMode === "user" ? "フロント" : "リア"})`}
+                        </div>
+                      )}
+
+                      {isCapturing && (
+                        <div className="absolute bottom-2 left-2 bg-purple-500 text-white px-2 py-1 rounded text-xs">
+                          {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="prompts" className="space-y-4">
+                    <div>
+                      <Label className="text-base font-medium flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        システムプロンプト
+                      </Label>
+                      <Textarea
+                        value={tempSystemPrompt}
+                        onChange={(e) => setTempSystemPrompt(e.target.value)}
+                        placeholder="システムプロンプトを入力してください..."
+                        className="mt-2 min-h-[300px]"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <Button onClick={saveSystemPrompt} size="sm">
+                          <Save className="w-3 h-3 mr-1" />
+                          保存
+                        </Button>
+                        <Button onClick={resetSystemPrompt} variant="outline" size="sm">
+                          <RotateCcw className="w-3 h-3 mr-1" />
+                          リセット
+                        </Button>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="rag" className="space-y-4">
+                    <div>
+                      <Label className="text-base font-medium flex items-center gap-2">
+                        <Database className="w-4 h-4" />
+                        RAG文書管理
+                      </Label>
+
+                      {/* Add new document */}
+                      <div className="space-y-2 mt-2">
+                        <Input
+                          value={newDocTitle}
+                          onChange={(e) => setNewDocTitle(e.target.value)}
+                          placeholder="文書タイトル"
+                        />
+                        <Select value={newDocCategory} onValueChange={setNewDocCategory}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="FAQ">FAQ</SelectItem>
+                            <SelectItem value="製品情報">製品情報</SelectItem>
+                            <SelectItem value="手順書">手順書</SelectItem>
+                            <SelectItem value="その他">その他</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Textarea
+                          value={newDocContent}
+                          onChange={(e) => setNewDocContent(e.target.value)}
+                          placeholder="文書内容"
+                          className="min-h-[100px]"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={addRAGDocument}
+                            size="sm"
+                            disabled={!newDocTitle.trim() || !newDocContent.trim()}
+                          >
+                            追加
+                          </Button>
+                          <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
+                            <Upload className="w-3 h-3 mr-1" />
+                            ファイル
+                          </Button>
+                        </div>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".txt,.csv"
+                          onChange={loadRAGFromFile}
+                          className="hidden"
+                        />
+                      </div>
+
+                      {/* Document list */}
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        {ragDocuments.map((doc) => (
+                          <div key={doc.id} className="p-2 border rounded text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">
+                                [{doc.category}] {doc.title}
                               </span>
-                            )}
+                              <Button
+                                onClick={() => removeRAGDocument(doc.id)}
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                              >
+                                ×
+                              </Button>
+                            </div>
+                            <p className="text-gray-600 text-xs mt-1">{doc.content}</p>
+                          </div>
+                        ))}
+                        {ragDocuments.length === 0 && (
+                          <div className="text-center text-gray-500 text-sm py-4">RAG文書がありません</div>
+                        )}
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+
+            {/* Right Panel - Desktop Chat */}
+            <Card className="col-span-2 flex flex-col" style={{ minHeight: "calc(100vh - 2rem)" }}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5" />
+                  顧客サポートチャット
+                  {ragDocuments.length > 0 && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                      RAG有効 ({ragDocuments.length}件)
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col flex-grow p-4 pt-0">
+                <ScrollArea className="flex-grow pr-4 mb-4">
+                  <div className="space-y-4">
+                    {messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${message.type === "user" || message.type === "voice" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] p-3 rounded-lg ${
+                            message.type === "user"
+                              ? "bg-blue-500 text-white"
+                              : message.type === "voice"
+                                ? "bg-purple-500 text-white"
+                                : message.type === "system"
+                                  ? "bg-gray-100 text-gray-700 border"
+                                  : message.isPeriodicAnalysis
+                                    ? "bg-purple-100 text-purple-800 border border-purple-200"
+                                    : "bg-green-100 text-green-800"
+                          }`}
+                        >
+                          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</p>
+                            <div className="flex items-center gap-1">
+                              {message.isVoiceInput && (
+                                <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">
+                                  音声入力
+                                </span>
+                              )}
+                              {message.isPeriodicAnalysis && (
+                                <span className="text-xs bg-purple-200 text-purple-700 px-2 py-1 rounded">
+                                  定期解析
+                                </span>
+                              )}
+                              {message.hasImage && (
+                                <span className="text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">画像付き</span>
+                              )}
+                              {message.promptType && (
+                                <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
+                                  {message.promptType}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-
-              {/* Desktop Chat Input - Always visible and fixed at bottom */}
-              <div className="border-t pt-4 mt-auto relative z-10">
-                <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
-                  <MessageSquare className="w-4 h-4" />
-                  {getLocalizedText("realTimeChat", interfaceLanguage)}
-                </Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Textarea
-                      id="chatMessage"
-                      ref={chatInputRef}
-                      value={chatMessage}
-                      onChange={(e) => setChatMessage(e.target.value)}
-                      onKeyPress={handleChatKeyPress}
-                      placeholder={getLocalizedText("enterMessage", interfaceLanguage)}
-                      className="flex-1 min-h-[60px] max-h-[120px] pr-10"
-                      disabled={isSendingChat}
-                    />
-                    {capabilities.speechRecognition && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={toggleListening}
-                        disabled={!capabilities.speechRecognition}
-                        className="absolute right-2 bottom-2 h-8 w-8 p-0"
-                      >
-                        {isListening ? (
-                          <Mic className="w-4 h-4 text-gray-500" />
-                        ) : (
-                          <MicOff className="w-4 h-4 text-red-500" />
-                        )}
-                      </Button>
-                    )}
+                    ))}
+                    <div ref={messagesEndRef} />
                   </div>
-                  <Button
-                    onClick={sendChatMessage}
-                    disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
-                    size="sm"
-                    className="h-auto"
-                  >
-                    {isSendingChat ? (
-                      getLocalizedText("sending", interfaceLanguage)
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                      </>
-                    )}
-                  </Button>
+                </ScrollArea>
+
+                {/* Desktop Chat Input */}
+                <div className="border-t pt-4 mt-auto">
+                  <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
+                    <MessageSquare className="w-4 h-4" />
+                    リアルタイムチャット
+                  </Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Textarea
+                        id="chatMessage"
+                        ref={chatInputRef}
+                        value={chatMessage}
+                        onChange={(e) => setChatMessage(e.target.value)}
+                        onKeyPress={handleChatKeyPress}
+                        placeholder={
+                          interimTranscript || "メッセージを入力してください... (Enterで送信、Shift+Enterで改行)"
+                        }
+                        className="flex-1 min-h-[60px] max-h-[120px] pr-10"
+                        disabled={isSendingChat}
+                      />
+                      {capabilities.speechRecognition && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={toggleListening}
+                          disabled={!capabilities.speechRecognition}
+                          className={`absolute right-2 bottom-2 h-8 w-8 p-0 ${isListening ? "bg-red-100" : ""}`}
+                        >
+                          {isListening ? (
+                            <Mic className="w-4 h-4 text-red-500" />
+                          ) : (
+                            <MicOff className="w-4 h-4 text-gray-500" />
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                    <Button
+                      onClick={sendChatMessage}
+                      disabled={!chatMessage.trim() || isSendingChat || !apiStatus.gemini}
+                      size="sm"
+                      className="h-auto"
+                    >
+                      {isSendingChat ? (
+                        "送信中..."
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

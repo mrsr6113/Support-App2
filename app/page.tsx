@@ -139,7 +139,7 @@ const DEFAULT_SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッ�
 
 export default function AIVisionChat() {
   const [captureMode, setCaptureMode] = useState<"camera" | "screen">("camera")
-  const [visualAnalysisType, setVisualAnalysisType] = useState<keyof typeof VISUAL_ANALYSIS_PROMPTS>("simple_detection")
+  const [visualAnalysisType, setVisualAnalysisType] = useState<keyof typeof VISUAL_ANALYSIS_PROMPTS>("detailed_detection")
   const [customPrompt, setCustomPrompt] = useState("この画像に何が写っていますか？")
   const [chatMessage, setChatMessage] = useState("")
   const [frequency, setFrequency] = useState("0")

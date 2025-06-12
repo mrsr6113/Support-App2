@@ -81,18 +81,18 @@ declare global {
 
 // Visual Analysis Prompt Templates
 const VISUAL_ANALYSIS_PROMPTS = {
-  simple_detection: {
-    name: "簡易物体検知",
-    icon: <Search className="w-4 h-4" />,
-    prompt: "映った物体名を詳細に確認し、商品名などを簡潔に回答してください。",
-    description: "基本的な物体の識別と商品名の特定",
-  },
   detailed_detection: {
     name: "物体詳細検知",
     icon: <Eye className="w-4 h-4" />,
     prompt:
       "映った物体名を詳細に確認し、商品名や型番が特定出来たらWebで検索して詳しい特徴などを調べた結果を簡潔に回答してください。",
     description: "詳細な物体分析と仕様情報の提供",
+  },
+  simple_detection: {
+    name: "簡易物体検知",
+    icon: <Search className="w-4 h-4" />,
+    prompt: "映った物体名を詳細に確認し、商品名などを簡潔に回答してください。",
+    description: "基本的な物体の識別と商品名の特定",
   },
   text_recognition: {
     name: "文字認識",

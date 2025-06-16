@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
 import {
   Mic,
   MicOff,
@@ -39,7 +40,12 @@ import {
   RotateCcw,
   Database,
   Brain,
+  Cloud,
+  Loader2,
+  Trash2,
+  Plus,
 } from "lucide-react"
+import { useSupabaseRAGDocuments, useSupabaseSystemPrompts, useSupabaseVisualPrompts } from "@/hooks/useSupabaseData"
 
 interface ChatMessage {
   id: string
@@ -64,14 +70,6 @@ interface SpeechRecognition extends EventTarget {
   onstart: () => void
 }
 
-interface RAGDocument {
-  id: string
-  title: string
-  content: string
-  category: string
-  timestamp: Date
-}
-
 declare global {
   interface Window {
     webkitSpeechRecognition: new () => SpeechRecognition
@@ -79,8 +77,8 @@ declare global {
   }
 }
 
-// Visual Analysis Prompt Templates
-const VISUAL_ANALYSIS_PROMPTS = {
+// Default fallback prompts (used if Supabase is unavailable)
+const FALLBACK_VISUAL_ANALYSIS_PROMPTS = {
   detailed_detection: {
     name: "物体詳細検知",
     icon: <Eye className="w-4 h-4" />,
@@ -139,7 +137,7 @@ const DEFAULT_SYSTEM_PROMPT = `あなたは顧客サポートのプロフェッ�
 
 export default function AIVisionChat() {
   const [captureMode, setCaptureMode] = useState<"camera" | "screen">("camera")
-  const [visualAnalysisType, setVisualAnalysisType] = useState<keyof typeof VISUAL_ANALYSIS_PROMPTS>("detailed_detection")
+  const [visualAnalysisType, setVisualAnalysisType] = useState<string>("detailed_detection")
   const [customPrompt, setCustomPrompt] = useState("この画像に何が写っていますか？")
   const [chatMessage, setChatMessage] = useState("")
   const [frequency, setFrequency] = useState("0")
@@ -160,10 +158,12 @@ export default function AIVisionChat() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
   const [tempSystemPrompt, setTempSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
-  const [ragDocuments, setRagDocuments] = useState<RAGDocument[]>([])
+  const [selectedSystemPromptId, setSelectedSystemPromptId] = useState<string>("")
+  const [chatSessionId, setChatSessionId] = useState<string>("")
   const [newDocTitle, setNewDocTitle] = useState("")
   const [newDocContent, setNewDocContent] = useState("")
   const [newDocCategory, setNewDocCategory] = useState("FAQ")
+  const [newDocTags, setNewDocTags] = useState("")
   const [capabilities, setCapabilities] = useState({
     camera: false,
     screenShare: false,
@@ -171,6 +171,28 @@ export default function AIVisionChat() {
     mobileScreenShare: false,
     multipleCameras: false,
   })
+
+  // Supabase hooks
+  const {
+    documents: supabaseRAGDocuments,
+    loading: ragLoading,
+    error: ragError,
+    addDocument: addRAGDocument,
+    deleteDocument: deleteRAGDocument,
+  } = useSupabaseRAGDocuments()
+
+  const {
+    prompts: supabaseSystemPrompts,
+    loading: systemPromptsLoading,
+    error: systemPromptsError,
+    addPrompt: addSystemPrompt,
+  } = useSupabaseSystemPrompts()
+
+  const {
+    prompts: supabaseVisualPrompts,
+    loading: visualPromptsLoading,
+    error: visualPromptsError,
+  } = useSupabaseVisualPrompts()
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -181,24 +203,88 @@ export default function AIVisionChat() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Get current visual analysis prompt
+  // Generate session ID on component mount
+  useEffect(() => {
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    setChatSessionId(sessionId)
+  }, [])
+
+  // Get current visual analysis prompt (from Supabase or fallback)
   const getCurrentVisualPrompt = () => {
     if (visualAnalysisType === "custom") {
       return customPrompt
     }
-    return VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].prompt
+
+    // Try to find in Supabase prompts first
+    const supabasePrompt = supabaseVisualPrompts.find(
+      (p) => p.id === visualAnalysisType || p.name === visualAnalysisType,
+    )
+    if (supabasePrompt) {
+      return supabasePrompt.prompt
+    }
+
+    // Fallback to local prompts
+    const fallbackPrompt =
+      FALLBACK_VISUAL_ANALYSIS_PROMPTS[visualAnalysisType as keyof typeof FALLBACK_VISUAL_ANALYSIS_PROMPTS]
+    return fallbackPrompt?.prompt || ""
   }
 
-  // RAG functionality
+  // Get available visual analysis prompts (Supabase + fallback)
+  const getAvailableVisualPrompts = () => {
+    const prompts: any = {}
+
+    // Add Supabase prompts
+    supabaseVisualPrompts.forEach((prompt) => {
+      prompts[prompt.id] = {
+        name: prompt.name,
+        icon: getIconForPrompt(prompt.icon_name),
+        prompt: prompt.prompt,
+        description: prompt.description || "",
+        isSupabase: true,
+      }
+    })
+
+    // Add fallback prompts if not already present
+    Object.entries(FALLBACK_VISUAL_ANALYSIS_PROMPTS).forEach(([key, value]) => {
+      if (!prompts[key]) {
+        prompts[key] = {
+          ...value,
+          isSupabase: false,
+        }
+      }
+    })
+
+    return prompts
+  }
+
+  const getIconForPrompt = (iconName: string) => {
+    switch (iconName) {
+      case "eye":
+        return <Eye className="w-4 h-4" />
+      case "search":
+        return <Search className="w-4 h-4" />
+      case "type":
+        return <Type className="w-4 h-4" />
+      case "image":
+        return <ImageIcon className="w-4 h-4" />
+      case "file-text":
+        return <FileText className="w-4 h-4" />
+      default:
+        return <Eye className="w-4 h-4" />
+    }
+  }
+
+  // RAG functionality with Supabase documents
   const searchRAGDocuments = (query: string): string => {
-    if (ragDocuments.length === 0) return ""
+    if (supabaseRAGDocuments.length === 0) return ""
 
     const queryLower = query.toLowerCase()
-    const relevantDocs = ragDocuments.filter(
+    const relevantDocs = supabaseRAGDocuments.filter(
       (doc) =>
         doc.title.toLowerCase().includes(queryLower) ||
         doc.content.toLowerCase().includes(queryLower) ||
-        doc.category.toLowerCase().includes(queryLower),
+        doc.category.toLowerCase().includes(queryLower) ||
+        (doc.tags && doc.tags.some((tag) => tag.toLowerCase().includes(queryLower))),
     )
 
     if (relevantDocs.length === 0) return ""
@@ -206,26 +292,31 @@ export default function AIVisionChat() {
     return relevantDocs.map((doc) => `[${doc.category}] ${doc.title}: ${doc.content}`).join("\n\n")
   }
 
-  const addRAGDocument = () => {
+  const handleAddRAGDocument = async () => {
     if (!newDocTitle.trim() || !newDocContent.trim()) return
 
-    const newDoc: RAGDocument = {
-      id: `${Date.now()}-${Math.random()}`,
-      title: newDocTitle.trim(),
-      content: newDocContent.trim(),
-      category: newDocCategory,
-      timestamp: new Date(),
+    try {
+      const tags = newDocTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0)
+      await addRAGDocument(newDocTitle.trim(), newDocContent.trim(), newDocCategory, tags)
+      setNewDocTitle("")
+      setNewDocContent("")
+      setNewDocTags("")
+      addMessage("system", `📚 RAG文書「${newDocTitle}」をSupabaseに追加しました。`)
+    } catch (error) {
+      addMessage("system", `❌ RAG文書の追加に失敗しました: ${error instanceof Error ? error.message : "不明なエラー"}`)
     }
-
-    setRagDocuments((prev) => [...prev, newDoc])
-    setNewDocTitle("")
-    setNewDocContent("")
-    addMessage("system", `📚 RAG文書「${newDoc.title}」を追加しました。`)
   }
 
-  const removeRAGDocument = (id: string) => {
-    setRagDocuments((prev) => prev.filter((doc) => doc.id !== id))
-    addMessage("system", "📚 RAG文書を削除しました。")
+  const handleDeleteRAGDocument = async (id: string) => {
+    try {
+      await deleteRAGDocument(id)
+      addMessage("system", "📚 RAG文書をSupabaseから削除しました。")
+    } catch (error) {
+      addMessage("system", `❌ RAG文書の削除に失敗しました: ${error instanceof Error ? error.message : "不明なエラー"}`)
+    }
   }
 
   const loadRAGFromFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -233,31 +324,39 @@ export default function AIVisionChat() {
     if (!file) return
 
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
         const lines = content.split("\n").filter((line) => line.trim())
 
-        lines.forEach((line, index) => {
-          if (line.trim()) {
-            const newDoc: RAGDocument = {
-              id: `${Date.now()}-${index}`,
-              title: `インポート文書 ${index + 1}`,
-              content: line.trim(),
-              category: "インポート",
-              timestamp: new Date(),
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim()
+          if (line) {
+            try {
+              await addRAGDocument(`インポート文書 ${i + 1}`, line, "インポート", ["インポート"])
+            } catch (error) {
+              console.error(`Failed to add document ${i + 1}:`, error)
             }
-            setRagDocuments((prev) => [...prev, newDoc])
           }
-        })
+        }
 
-        addMessage("system", `📚 ${lines.length}件のRAG文書をインポートしました。`)
+        addMessage("system", `📚 ${lines.length}件のRAG文書をSupabaseにインポートしました。`)
       } catch (error) {
         addMessage("system", "❌ ファイルの読み込みに失敗しました。")
       }
     }
     reader.readAsText(file)
   }
+
+  // Initialize with default system prompt from Supabase
+  useEffect(() => {
+    if (supabaseSystemPrompts.length > 0 && !selectedSystemPromptId) {
+      const defaultPrompt = supabaseSystemPrompts.find((p) => p.is_default) || supabaseSystemPrompts[0]
+      setSelectedSystemPromptId(defaultPrompt.id)
+      setSystemPrompt(defaultPrompt.prompt)
+      setTempSystemPrompt(defaultPrompt.prompt)
+    }
+  }, [supabaseSystemPrompts, selectedSystemPromptId])
 
   // メッセージを最下部にスクロール
   const scrollToBottom = () => {
@@ -363,10 +462,30 @@ export default function AIVisionChat() {
       } else {
         addMessage("system", "⚠️ メディア機能が制限されています。")
       }
+
+      // Supabase connection status
+      if (!ragLoading && !systemPromptsLoading && !visualPromptsLoading) {
+        if (supabaseRAGDocuments.length > 0 || supabaseSystemPrompts.length > 0 || supabaseVisualPrompts.length > 0) {
+          addMessage(
+            "system",
+            `☁️ Supabaseに接続しました。RAG文書: ${supabaseRAGDocuments.length}件、システムプロンプト: ${supabaseSystemPrompts.length}件、解析プロンプト: ${supabaseVisualPrompts.length}件`,
+          )
+        } else {
+          addMessage("system", "⚠️ Supabaseからのデータ取得に問題があります。ローカル設定を使用します。")
+        }
+      }
     }
 
     checkCapabilities()
-  }, [isMobile])
+  }, [
+    isMobile,
+    ragLoading,
+    systemPromptsLoading,
+    visualPromptsLoading,
+    supabaseRAGDocuments.length,
+    supabaseSystemPrompts.length,
+    supabaseVisualPrompts.length,
+  ])
 
   // API設定チェック
   useEffect(() => {
@@ -749,7 +868,8 @@ export default function AIVisionChat() {
           captureAndAnalyze()
         }, Number.parseFloat(frequency) * 1000)
 
-        const currentPromptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
+        const availablePrompts = getAvailableVisualPrompts()
+        const currentPromptName = availablePrompts[visualAnalysisType]?.name || "不明"
         addMessage("system", `${frequency}秒間隔で画像解析を開始します。 (${currentPromptName}モード)`)
       } else {
         addMessage("system", "定期解析なしで開始しました。手動で解析を実行できます。")
@@ -837,7 +957,8 @@ export default function AIVisionChat() {
         throw new Error("フレームキャプチャに失敗しました")
       }
 
-      const promptName = VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name
+      const availablePrompts = getAvailableVisualPrompts()
+      const promptName = availablePrompts[visualAnalysisType]?.name || "不明"
       const isActuallyPeriodic = Number.parseFloat(frequency) > 0
       addMessage(
         "system",
@@ -901,8 +1022,17 @@ export default function AIVisionChat() {
       // Search RAG documents for relevant information
       const ragContext = searchRAGDocuments(userMessage)
 
+      // Get current system prompt
+      let currentSystemPrompt = systemPrompt
+      if (selectedSystemPromptId) {
+        const selectedPrompt = supabaseSystemPrompts.find((p) => p.id === selectedSystemPromptId)
+        if (selectedPrompt) {
+          currentSystemPrompt = selectedPrompt.prompt
+        }
+      }
+
       // Enhance system prompt with RAG context if available
-      let enhancedSystemPrompt = systemPrompt
+      let enhancedSystemPrompt = currentSystemPrompt
       if (ragContext) {
         enhancedSystemPrompt += `\n\n【参考情報】\n以下の情報も参考にして回答してください：\n${ragContext}`
       }
@@ -910,6 +1040,7 @@ export default function AIVisionChat() {
       const requestBody: any = {
         prompt: userMessage,
         systemPrompt: enhancedSystemPrompt,
+        sessionId: chatSessionId,
         mimeType: "image/jpeg",
       }
 
@@ -920,7 +1051,8 @@ export default function AIVisionChat() {
         addMessage("system", "💬 テキストメッセージを送信中...")
       }
 
-      const response = await fetch("/api/chat", {
+      // Use the new chat-with-history endpoint
+      const response = await fetch("/api/chat-with-history", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -933,10 +1065,23 @@ export default function AIVisionChat() {
 
       if (result.success) {
         const responsePrefix = ragContext ? "[RAG強化] " : ""
-        addMessage("ai", `${responsePrefix}${result.response}`, false, false, !!base64Data, "システムプロンプト")
+        const contextPrefix = "[履歴付き] "
+        addMessage(
+          "ai",
+          `${contextPrefix}${responsePrefix}${result.response}`,
+          false,
+          false,
+          !!base64Data,
+          "システムプロンプト",
+        )
 
         if (result.response && isTTSEnabled) {
           speakText(result.response)
+        }
+
+        // Update session ID if provided
+        if (result.sessionId && result.sessionId !== chatSessionId) {
+          setChatSessionId(result.sessionId)
         }
       } else {
         addMessage("system", `❌ チャットエラー: ${result.error}`)
@@ -1056,9 +1201,20 @@ export default function AIVisionChat() {
   }
 
   const resetSystemPrompt = () => {
-    setTempSystemPrompt(DEFAULT_SYSTEM_PROMPT)
-    setSystemPrompt(DEFAULT_SYSTEM_PROMPT)
+    const defaultPrompt = supabaseSystemPrompts.find((p) => p.is_default)?.prompt || DEFAULT_SYSTEM_PROMPT
+    setTempSystemPrompt(defaultPrompt)
+    setSystemPrompt(defaultPrompt)
     addMessage("system", "🔄 システムプロンプトをデフォルトに戻しました。")
+  }
+
+  const handleSystemPromptChange = (promptId: string) => {
+    setSelectedSystemPromptId(promptId)
+    const selectedPrompt = supabaseSystemPrompts.find((p) => p.id === promptId)
+    if (selectedPrompt) {
+      setSystemPrompt(selectedPrompt.prompt)
+      setTempSystemPrompt(selectedPrompt.prompt)
+      addMessage("system", `✅ システムプロンプト「${selectedPrompt.name}」を選択しました。`)
+    }
   }
 
   // API状態
@@ -1078,6 +1234,12 @@ export default function AIVisionChat() {
             <div className="flex items-center gap-2">
               <Camera className="w-5 h-5" />
               <span className="font-semibold">AI Vision Chat</span>
+              {supabaseRAGDocuments.length > 0 && (
+                <Badge variant="secondary" className="text-xs">
+                  <Cloud className="w-3 h-3 mr-1" />
+                  Supabase
+                </Badge>
+              )}
             </div>
             <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
               <DialogTrigger asChild>
@@ -1110,6 +1272,28 @@ export default function AIVisionChat() {
                       </AlertDescription>
                     </Alert>
 
+                    {/* Supabase Status */}
+                    <Alert>
+                      <Cloud className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="text-sm">
+                          <div className="font-medium mb-1">Supabase接続状況:</div>
+                          {ragLoading || systemPromptsLoading || visualPromptsLoading ? (
+                            <div className="flex items-center gap-2">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              接続中...
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <div>RAG文書: {supabaseRAGDocuments.length}件</div>
+                              <div>システムプロンプト: {supabaseSystemPrompts.length}件</div>
+                              <div>解析プロンプト: {supabaseVisualPrompts.length}件</div>
+                            </div>
+                          )}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+
                     {/* Capture Mode */}
                     <div>
                       <Label className="text-sm font-medium">キャプチャモード</Label>
@@ -1139,20 +1323,23 @@ export default function AIVisionChat() {
                     {/* Analysis Type */}
                     <div>
                       <Label className="text-sm font-medium">解析タイプ</Label>
-                      <Select
-                        value={visualAnalysisType}
-                        onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
-                        disabled={isCapturing}
-                      >
+                      <Select value={visualAnalysisType} onValueChange={setVisualAnalysisType} disabled={isCapturing}>
                         <SelectTrigger className="mt-2">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
+                          {Object.entries(getAvailableVisualPrompts()).map(([key, config]) => (
                             <SelectItem key={key} value={key}>
                               <div className="flex items-center gap-2">
                                 {config.icon}
-                                {config.name}
+                                <div>
+                                  <div className="font-medium">{config.name}</div>
+                                  {config.isSupabase && (
+                                    <Badge variant="outline" className="text-xs">
+                                      Supabase
+                                    </Badge>
+                                  )}
+                                </div>
                               </div>
                             </SelectItem>
                           ))}
@@ -1231,8 +1418,43 @@ export default function AIVisionChat() {
                   </TabsContent>
 
                   <TabsContent value="prompts" className="space-y-4">
+                    {/* System Prompt Selection */}
                     <div>
-                      <Label className="text-sm font-medium">システムプロンプト</Label>
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        システムプロンプト選択
+                      </Label>
+                      {systemPromptsLoading ? (
+                        <div className="flex items-center gap-2 mt-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          読み込み中...
+                        </div>
+                      ) : (
+                        <Select value={selectedSystemPromptId} onValueChange={handleSystemPromptChange}>
+                          <SelectTrigger className="mt-2">
+                            <SelectValue placeholder="システムプロンプトを選択" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {supabaseSystemPrompts.map((prompt) => (
+                              <SelectItem key={prompt.id} value={prompt.id}>
+                                <div className="flex items-center gap-2">
+                                  {prompt.name}
+                                  {prompt.is_default && (
+                                    <Badge variant="default" className="text-xs">
+                                      デフォルト
+                                    </Badge>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+
+                    {/* System Prompt Editor */}
+                    <div>
+                      <Label className="text-sm font-medium">システムプロンプト編集</Label>
                       <Textarea
                         value={tempSystemPrompt}
                         onChange={(e) => setTempSystemPrompt(e.target.value)}
@@ -1256,7 +1478,7 @@ export default function AIVisionChat() {
                     <div>
                       <Label className="text-sm font-medium flex items-center gap-2">
                         <Database className="w-4 h-4" />
-                        RAG文書管理
+                        RAG文書管理 (Supabase)
                       </Label>
 
                       {/* Add new document */}
@@ -1274,9 +1496,15 @@ export default function AIVisionChat() {
                             <SelectItem value="FAQ">FAQ</SelectItem>
                             <SelectItem value="製品情報">製品情報</SelectItem>
                             <SelectItem value="手順書">手順書</SelectItem>
+                            <SelectItem value="サポート">サポート</SelectItem>
                             <SelectItem value="その他">その他</SelectItem>
                           </SelectContent>
                         </Select>
+                        <Input
+                          value={newDocTags}
+                          onChange={(e) => setNewDocTags(e.target.value)}
+                          placeholder="タグ (カンマ区切り)"
+                        />
                         <Textarea
                           value={newDocContent}
                           onChange={(e) => setNewDocContent(e.target.value)}
@@ -1285,10 +1513,11 @@ export default function AIVisionChat() {
                         />
                         <div className="flex gap-2">
                           <Button
-                            onClick={addRAGDocument}
+                            onClick={handleAddRAGDocument}
                             size="sm"
                             disabled={!newDocTitle.trim() || !newDocContent.trim()}
                           >
+                            <Plus className="w-3 h-3 mr-1" />
                             追加
                           </Button>
                           <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
@@ -1307,24 +1536,48 @@ export default function AIVisionChat() {
 
                       {/* Document list */}
                       <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                        {ragDocuments.map((doc) => (
-                          <div key={doc.id} className="p-2 border rounded text-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-medium">
-                                [{doc.category}] {doc.title}
-                              </span>
-                              <Button
-                                onClick={() => removeRAGDocument(doc.id)}
-                                variant="ghost"
-                                size="sm"
-                                className="h-4 w-4 p-0"
-                              >
-                                ×
-                              </Button>
-                            </div>
-                            <p className="text-gray-600 truncate">{doc.content}</p>
+                        {ragLoading ? (
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            読み込み中...
                           </div>
-                        ))}
+                        ) : supabaseRAGDocuments.length > 0 ? (
+                          supabaseRAGDocuments.map((doc) => (
+                            <div key={doc.id} className="p-2 border rounded text-xs">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">
+                                    [{doc.category}] {doc.title}
+                                  </span>
+                                  <Badge variant="outline" className="text-xs">
+                                    <Cloud className="w-2 h-2 mr-1" />
+                                    Supabase
+                                  </Badge>
+                                </div>
+                                <Button
+                                  onClick={() => handleDeleteRAGDocument(doc.id)}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-4 w-4 p-0"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                              {doc.tags && doc.tags.length > 0 && (
+                                <div className="flex gap-1 mt-1">
+                                  {doc.tags.map((tag, index) => (
+                                    <Badge key={index} variant="secondary" className="text-xs">
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-gray-600 truncate mt-1">{doc.content}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center text-gray-500 text-sm py-4">RAG文書がありません</div>
+                        )}
                       </div>
                     </div>
                   </TabsContent>
@@ -1512,6 +1765,12 @@ export default function AIVisionChat() {
                 <CardTitle className="flex items-center gap-2">
                   <Camera className="w-5 h-5" />
                   AI Vision Chat
+                  {supabaseRAGDocuments.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      <Cloud className="w-3 h-3 mr-1" />
+                      Supabase
+                    </Badge>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -1533,6 +1792,29 @@ export default function AIVisionChat() {
                           <AlertCircle className="w-4 h-4 text-yellow-500" />
                         )}
                         {apiStatus.message}
+                      </AlertDescription>
+                    </Alert>
+
+                    {/* Supabase Status */}
+                    <Alert>
+                      <Cloud className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="text-sm">
+                          <div className="font-medium mb-2">Supabase接続状況:</div>
+                          {ragLoading || systemPromptsLoading || visualPromptsLoading ? (
+                            <div className="flex items-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              接続中...
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <div>RAG文書: {supabaseRAGDocuments.length}件</div>
+                              <div>システムプロンプト: {supabaseSystemPrompts.length}件</div>
+                              <div>解析プロンプト: {supabaseVisualPrompts.length}件</div>
+                              <div className="text-xs text-gray-500 mt-2">セッションID: {chatSessionId.slice(-8)}</div>
+                            </div>
+                          )}
+                        </div>
                       </AlertDescription>
                     </Alert>
 
@@ -1589,22 +1871,25 @@ export default function AIVisionChat() {
                         <Eye className="w-4 h-4" />
                         画像解析プロンプト
                       </Label>
-                      <Select
-                        value={visualAnalysisType}
-                        onValueChange={(value: keyof typeof VISUAL_ANALYSIS_PROMPTS) => setVisualAnalysisType(value)}
-                        disabled={isCapturing}
-                      >
+                      <Select value={visualAnalysisType} onValueChange={setVisualAnalysisType} disabled={isCapturing}>
                         <SelectTrigger className="mt-2">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.entries(VISUAL_ANALYSIS_PROMPTS).map(([key, config]) => (
+                          {Object.entries(getAvailableVisualPrompts()).map(([key, config]) => (
                             <SelectItem key={key} value={key}>
                               <div className="flex items-center gap-2">
                                 {config.icon}
                                 <div>
                                   <div className="font-medium">{config.name}</div>
-                                  <div className="text-xs text-gray-500">{config.description}</div>
+                                  <div className="text-xs text-gray-500 flex items-center gap-1">
+                                    {config.description}
+                                    {config.isSupabase && (
+                                      <Badge variant="outline" className="text-xs">
+                                        Supabase
+                                      </Badge>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </SelectItem>
@@ -1768,18 +2053,54 @@ export default function AIVisionChat() {
 
                       {isCapturing && (
                         <div className="absolute bottom-2 left-2 bg-purple-500 text-white px-2 py-1 rounded text-xs">
-                          {VISUAL_ANALYSIS_PROMPTS[visualAnalysisType].name}
+                          {getAvailableVisualPrompts()[visualAnalysisType]?.name || "不明"}
                         </div>
                       )}
                     </div>
                   </TabsContent>
 
                   <TabsContent value="prompts" className="space-y-4">
+                    {/* System Prompt Selection */}
                     <div>
                       <Label className="text-base font-medium flex items-center gap-2">
                         <Brain className="w-4 h-4" />
-                        システムプロンプト
+                        システムプロンプト選択
                       </Label>
+                      {systemPromptsLoading ? (
+                        <div className="flex items-center gap-2 mt-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          読み込み中...
+                        </div>
+                      ) : (
+                        <Select value={selectedSystemPromptId} onValueChange={handleSystemPromptChange}>
+                          <SelectTrigger className="mt-2">
+                            <SelectValue placeholder="システムプロンプトを選択" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {supabaseSystemPrompts.map((prompt) => (
+                              <SelectItem key={prompt.id} value={prompt.id}>
+                                <div className="flex items-center gap-2">
+                                  {prompt.name}
+                                  {prompt.is_default && (
+                                    <Badge variant="default" className="text-xs">
+                                      デフォルト
+                                    </Badge>
+                                  )}
+                                  <Badge variant="outline" className="text-xs">
+                                    <Cloud className="w-2 h-2 mr-1" />
+                                    Supabase
+                                  </Badge>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+
+                    {/* System Prompt Editor */}
+                    <div>
+                      <Label className="text-base font-medium">システムプロンプト編集</Label>
                       <Textarea
                         value={tempSystemPrompt}
                         onChange={(e) => setTempSystemPrompt(e.target.value)}
@@ -1803,7 +2124,7 @@ export default function AIVisionChat() {
                     <div>
                       <Label className="text-base font-medium flex items-center gap-2">
                         <Database className="w-4 h-4" />
-                        RAG文書管理
+                        RAG文書管理 (Supabase)
                       </Label>
 
                       {/* Add new document */}
@@ -1821,9 +2142,15 @@ export default function AIVisionChat() {
                             <SelectItem value="FAQ">FAQ</SelectItem>
                             <SelectItem value="製品情報">製品情報</SelectItem>
                             <SelectItem value="手順書">手順書</SelectItem>
+                            <SelectItem value="サポート">サポート</SelectItem>
                             <SelectItem value="その他">その他</SelectItem>
                           </SelectContent>
                         </Select>
+                        <Input
+                          value={newDocTags}
+                          onChange={(e) => setNewDocTags(e.target.value)}
+                          placeholder="タグ (カンマ区切り)"
+                        />
                         <Textarea
                           value={newDocContent}
                           onChange={(e) => setNewDocContent(e.target.value)}
@@ -1832,10 +2159,11 @@ export default function AIVisionChat() {
                         />
                         <div className="flex gap-2">
                           <Button
-                            onClick={addRAGDocument}
+                            onClick={handleAddRAGDocument}
                             size="sm"
                             disabled={!newDocTitle.trim() || !newDocContent.trim()}
                           >
+                            <Plus className="w-3 h-3 mr-1" />
                             追加
                           </Button>
                           <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
@@ -1854,25 +2182,46 @@ export default function AIVisionChat() {
 
                       {/* Document list */}
                       <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                        {ragDocuments.map((doc) => (
-                          <div key={doc.id} className="p-2 border rounded text-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="font-medium">
-                                [{doc.category}] {doc.title}
-                              </span>
-                              <Button
-                                onClick={() => removeRAGDocument(doc.id)}
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0"
-                              >
-                                ×
-                              </Button>
-                            </div>
-                            <p className="text-gray-600 text-xs mt-1">{doc.content}</p>
+                        {ragLoading ? (
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            読み込み中...
                           </div>
-                        ))}
-                        {ragDocuments.length === 0 && (
+                        ) : supabaseRAGDocuments.length > 0 ? (
+                          supabaseRAGDocuments.map((doc) => (
+                            <div key={doc.id} className="p-2 border rounded text-sm">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">
+                                    [{doc.category}] {doc.title}
+                                  </span>
+                                  <Badge variant="outline" className="text-xs">
+                                    <Cloud className="w-2 h-2 mr-1" />
+                                    Supabase
+                                  </Badge>
+                                </div>
+                                <Button
+                                  onClick={() => handleDeleteRAGDocument(doc.id)}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                              {doc.tags && doc.tags.length > 0 && (
+                                <div className="flex gap-1 mt-1">
+                                  {doc.tags.map((tag, index) => (
+                                    <Badge key={index} variant="secondary" className="text-xs">
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-gray-600 text-xs mt-1">{doc.content}</p>
+                            </div>
+                          ))
+                        ) : (
                           <div className="text-center text-gray-500 text-sm py-4">RAG文書がありません</div>
                         )}
                       </div>
@@ -1888,11 +2237,14 @@ export default function AIVisionChat() {
                 <CardTitle className="flex items-center gap-2">
                   <MessageSquare className="w-5 h-5" />
                   顧客サポートチャット
-                  {ragDocuments.length > 0 && (
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                      RAG有効 ({ragDocuments.length}件)
-                    </span>
+                  {supabaseRAGDocuments.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      RAG有効 ({supabaseRAGDocuments.length}件)
+                    </Badge>
                   )}
+                  <Badge variant="outline" className="text-xs">
+                    履歴管理
+                  </Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col flex-grow p-4 pt-0">
@@ -1951,7 +2303,7 @@ export default function AIVisionChat() {
                 <div className="border-t pt-4 mt-auto">
                   <Label htmlFor="chatMessage" className="text-sm font-medium flex items-center gap-2 mb-2">
                     <MessageSquare className="w-4 h-4" />
-                    リアルタイムチャット
+                    リアルタイムチャット (履歴管理付き)
                   </Label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">

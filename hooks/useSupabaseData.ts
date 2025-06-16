@@ -15,13 +15,20 @@ export function useSupabaseRAGDocuments() {
       const result = await response.json()
 
       if (result.success) {
-        setDocuments(result.documents)
+        setDocuments(result.documents || [])
         setError(null)
+
+        // Show message if tables aren't initialized
+        if (result.message) {
+          console.warn(result.message)
+        }
       } else {
         setError(result.error)
+        setDocuments([])
       }
     } catch (err) {
       setError("Failed to fetch RAG documents")
+      setDocuments([])
       console.error("RAG documents fetch error:", err)
     } finally {
       setLoading(false)
@@ -93,13 +100,20 @@ export function useSupabaseSystemPrompts() {
       const result = await response.json()
 
       if (result.success) {
-        setPrompts(result.prompts)
+        setPrompts(result.prompts || [])
         setError(null)
+
+        // Show message if tables aren't initialized
+        if (result.message) {
+          console.warn(result.message)
+        }
       } else {
         setError(result.error)
+        setPrompts([])
       }
     } catch (err) {
       setError("Failed to fetch system prompts")
+      setPrompts([])
       console.error("System prompts fetch error:", err)
     } finally {
       setLoading(false)
@@ -152,13 +166,20 @@ export function useSupabaseVisualPrompts() {
       const result = await response.json()
 
       if (result.success) {
-        setPrompts(result.prompts)
+        setPrompts(result.prompts || [])
         setError(null)
+
+        // Show message if tables aren't initialized
+        if (result.message) {
+          console.warn(result.message)
+        }
       } else {
         setError(result.error)
+        setPrompts([])
       }
     } catch (err) {
       setError("Failed to fetch visual analysis prompts")
+      setPrompts([])
       console.error("Visual prompts fetch error:", err)
     } finally {
       setLoading(false)

@@ -3,6 +3,19 @@ import { supabaseAdmin } from "@/lib/supabase"
 
 export async function GET() {
   try {
+    // Check if the table exists first
+    const { data: tableExists, error: tableError } = await supabaseAdmin.from("rag_documents").select("id").limit(1)
+
+    if (tableError && tableError.code === "42P01") {
+      // Table doesn't exist
+      console.warn("RAG documents table does not exist. Please run the database setup script.")
+      return NextResponse.json({
+        success: true,
+        documents: [],
+        message: "Database tables not initialized. Please run the setup script.",
+      })
+    }
+
     const { data, error } = await supabaseAdmin
       .from("rag_documents")
       .select("*")
@@ -11,13 +24,27 @@ export async function GET() {
 
     if (error) {
       console.error("Supabase error:", error)
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+          documents: [],
+        },
+        { status: 500 },
+      )
     }
 
-    return NextResponse.json({ success: true, documents: data })
+    return NextResponse.json({ success: true, documents: data || [] })
   } catch (error) {
     console.error("RAG documents fetch error:", error)
-    return NextResponse.json({ success: false, error: "Failed to fetch RAG documents" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to fetch RAG documents",
+        documents: [],
+      },
+      { status: 500 },
+    )
   }
 }
 
@@ -27,6 +54,19 @@ export async function POST(request: NextRequest) {
 
     if (!title || !content) {
       return NextResponse.json({ success: false, error: "Title and content are required" }, { status: 400 })
+    }
+
+    // Check if the table exists first
+    const { data: tableExists, error: tableError } = await supabaseAdmin.from("rag_documents").select("id").limit(1)
+
+    if (tableError && tableError.code === "42P01") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database tables not initialized. Please run the setup script first.",
+        },
+        { status: 500 },
+      )
     }
 
     const { data, error } = await supabaseAdmin

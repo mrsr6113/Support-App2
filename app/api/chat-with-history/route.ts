@@ -25,35 +25,47 @@ export async function POST(request: NextRequest) {
     // Get or create chat session
     let chatSession
     if (sessionId) {
-      const { data: existingSession } = await supabaseAdmin
-        .from("chat_sessions")
-        .select("*")
-        .eq("session_id", sessionId)
-        .single()
+      try {
+        // Check if the table exists first
+        const { data: tableExists, error: tableError } = await supabaseAdmin.from("chat_sessions").select("id").limit(1)
 
-      chatSession = existingSession
+        if (tableError && tableError.code === "42P01") {
+          // Table doesn't exist, continue without session history
+          console.warn("Chat sessions table does not exist. Continuing without session history.")
+          chatSession = null
+        } else {
+          const { data: existingSession } = await supabaseAdmin
+            .from("chat_sessions")
+            .select("*")
+            .eq("session_id", sessionId)
+            .single()
+
+          chatSession = existingSession
+        }
+      } catch (error) {
+        console.warn("Failed to fetch chat session, continuing without history:", error)
+        chatSession = null
+      }
     }
 
-    if (!chatSession) {
-      const newSessionId = sessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      const { data: newSession, error } = await supabaseAdmin
-        .from("chat_sessions")
-        .insert({
-          session_id: newSessionId,
-          messages: [],
-        })
-        .select()
-        .single()
+    if (!chatSession && sessionId) {
+      try {
+        const newSessionId = sessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        const { data: newSession, error } = await supabaseAdmin
+          .from("chat_sessions")
+          .insert({
+            session_id: newSessionId,
+            messages: [],
+          })
+          .select()
+          .single()
 
-      if (error) {
-        console.error("Failed to create chat session:", error)
-        return NextResponse.json({
-          success: false,
-          error: "チャットセッションの作成に失敗しました。",
-        })
+        if (!error) {
+          chatSession = newSession
+        }
+      } catch (error) {
+        console.warn("Failed to create chat session, continuing without history:", error)
       }
-
-      chatSession = newSession
     }
 
     // Get the language from headers or default to Japanese
@@ -82,7 +94,7 @@ export async function POST(request: NextRequest) {
 
     // Start a chat with history
     const chat = model.startChat({
-      history: chatSession.messages || [],
+      history: chatSession?.messages || [],
       generationConfig: {
         temperature: 0.8,
         topK: 40,
@@ -138,32 +150,38 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Update chat session with new messages
-    const updatedMessages = [
-      ...(chatSession.messages || []),
-      {
-        role: "user",
-        parts: messageParts,
-      },
-      {
-        role: "model",
-        parts: [{ text: responseText }],
-      },
-    ]
+    // Update chat session with new messages (if session exists)
+    if (chatSession) {
+      try {
+        const updatedMessages = [
+          ...(chatSession.messages || []),
+          {
+            role: "user",
+            parts: messageParts,
+          },
+          {
+            role: "model",
+            parts: [{ text: responseText }],
+          },
+        ]
 
-    // Save updated session to Supabase
-    await supabaseAdmin
-      .from("chat_sessions")
-      .update({
-        messages: updatedMessages,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", chatSession.id)
+        // Save updated session to Supabase
+        await supabaseAdmin
+          .from("chat_sessions")
+          .update({
+            messages: updatedMessages,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", chatSession.id)
+      } catch (error) {
+        console.warn("Failed to update chat session:", error)
+      }
+    }
 
     return NextResponse.json({
       success: true,
       response: responseText.trim(),
-      sessionId: chatSession.session_id,
+      sessionId: chatSession?.session_id || sessionId,
     })
   } catch (error) {
     console.error("Chat with history error:", error)

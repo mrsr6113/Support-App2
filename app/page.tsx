@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   AlertCircle,
   User,
@@ -28,12 +29,15 @@ import {
   Settings,
   Upload,
   Save,
-  Eye,
   Database,
   ImageIcon,
   Link,
   CheckCircle,
   Plus,
+  Edit,
+  Trash2,
+  Send,
+  X,
 } from "lucide-react"
 
 interface ChatMessage {
@@ -63,17 +67,27 @@ interface RAGDocument {
   created_at: string
 }
 
-interface CameraState {
-  isActive: boolean
-  stream: MediaStream | null
-  isRecording: boolean
-  facingMode: "user" | "environment"
+interface SystemPrompt {
+  id: string
+  name: string
+  prompt: string
+  is_default: boolean
 }
 
-interface ScreenShareState {
-  isActive: boolean
-  stream: MediaStream | null
-}
+const CATEGORIES = [
+  { value: "general", label: "一般" },
+  { value: "coffee_maker", label: "コーヒーメーカー" },
+  { value: "maintenance", label: "メンテナンス" },
+  { value: "troubleshooting", label: "トラブルシューティング" },
+  { value: "safety", label: "安全" },
+  { value: "cleaning", label: "清掃" },
+  { value: "parts", label: "部品" },
+  { value: "indicators", label: "インジケーター" },
+  { value: "water_system", label: "給水システム" },
+  { value: "brewing", label: "抽出" },
+  { value: "electrical", label: "電気系統" },
+  { value: "mechanical", label: "機械系統" },
+]
 
 export default function AIVisionChatPage() {
   // Core state
@@ -84,20 +98,12 @@ export default function AIVisionChatPage() {
 
   // Media state
   const [inputMode, setInputMode] = useState<"camera" | "screen">("camera")
-  const [cameraState, setCameraState] = useState<CameraState>({
-    isActive: false,
-    stream: null,
-    isRecording: false,
-    facingMode: "environment",
-  })
-  const [screenShareState, setScreenShareState] = useState<ScreenShareState>({
-    isActive: false,
-    stream: null,
-  })
+  const [isStarted, setIsStarted] = useState(false)
+  const [stream, setStream] = useState<MediaStream | null>(null)
 
   // Analysis settings
   const [analysisFrequency, setAnalysisFrequency] = useState<number>(10)
-  const [systemPrompt, setSystemPrompt] = useState("general_assistant")
+  const [systemPrompt, setSystemPrompt] = useState("coffee_maker_expert")
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true)
   const [isAutoAnalysis, setIsAutoAnalysis] = useState(false)
 
@@ -107,11 +113,13 @@ export default function AIVisionChatPage() {
 
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
-  const [isStarted, setIsStarted] = useState(false)
 
   // RAG state
   const [ragDocuments, setRAGDocuments] = useState<RAGDocument[]>([])
+  const [systemPrompts, setSystemPrompts] = useState<SystemPrompt[]>([])
   const [selectedRAGEntry, setSelectedRAGEntry] = useState<string>("none")
+  const [editingRAGEntry, setEditingRAGEntry] = useState<RAGDocument | null>(null)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [newRAGEntry, setNewRAGEntry] = useState({
     title: "",
     content: "",
@@ -125,7 +133,6 @@ export default function AIVisionChatPage() {
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const ragImageInputRef = useRef<HTMLInputElement>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const recognitionRef = useRef<any>(null)
@@ -145,29 +152,47 @@ export default function AIVisionChatPage() {
     return () => window.removeEventListener("resize", checkMobile)
   }, [])
 
-  // Load RAG documents
+  // Load data
   useEffect(() => {
     loadRAGDocuments()
+    loadSystemPrompts()
   }, [])
+
+  // Set default system prompt
+  useEffect(() => {
+    if (systemPrompts.length > 0) {
+      const defaultPrompt = systemPrompts.find((p) => p.is_default)
+      if (defaultPrompt) {
+        setSystemPrompt(defaultPrompt.id)
+      }
+    }
+  }, [systemPrompts])
 
   const loadRAGDocuments = async () => {
     try {
-      const response = await fetch("/api/generic-rag/categories")
+      const response = await fetch("/api/supabase/rag-documents")
       if (response.ok) {
         const result = await response.json()
         if (result.success) {
-          // Also load actual documents
-          const docsResponse = await fetch("/api/supabase/rag-documents")
-          if (docsResponse.ok) {
-            const docsResult = await docsResponse.json()
-            if (docsResult.success) {
-              setRAGDocuments(docsResult.documents || [])
-            }
-          }
+          setRAGDocuments(result.documents || [])
         }
       }
     } catch (error) {
       console.error("Failed to load RAG documents:", error)
+    }
+  }
+
+  const loadSystemPrompts = async () => {
+    try {
+      const response = await fetch("/api/supabase/system-prompts")
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success) {
+          setSystemPrompts(result.prompts || [])
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load system prompts:", error)
     }
   }
 
@@ -176,22 +201,22 @@ export default function AIVisionChatPage() {
     try {
       const constraints = {
         video: {
-          facingMode: cameraState.facingMode,
+          facingMode: "environment",
           width: { ideal: isMobile ? 1280 : 1920 },
           height: { ideal: isMobile ? 720 : 1080 },
         },
         audio: false,
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream
+        videoRef.current.srcObject = mediaStream
         await videoRef.current.play()
       }
 
-      setCameraState((prev) => ({ ...prev, isActive: true, stream }))
-      addMessage("system", "📷 カメラを開始しました。(リアカメラ使用中)")
+      setStream(mediaStream)
+      addMessage("system", "📷 カメラを開始しました。")
 
       if (isAutoAnalysis) {
         startPeriodicAnalysis()
@@ -202,42 +227,19 @@ export default function AIVisionChatPage() {
     }
   }
 
-  const stopCamera = () => {
-    if (cameraState.stream) {
-      cameraState.stream.getTracks().forEach((track) => track.stop())
-    }
-    setCameraState({ isActive: false, stream: null, isRecording: false, facingMode: "environment" })
-    stopPeriodicAnalysis()
-    addMessage("system", "📷 カメラを停止しました。")
-  }
-
-  const switchCamera = async () => {
-    const newFacingMode = cameraState.facingMode === "user" ? "environment" : "user"
-    setCameraState((prev) => ({ ...prev, facingMode: newFacingMode }))
-
-    if (cameraState.isActive) {
-      stopCamera()
-      setTimeout(() => {
-        setCameraState((prev) => ({ ...prev, facingMode: newFacingMode }))
-        startCamera()
-      }, 100)
-    }
-  }
-
-  // Screen share functions
   const startScreenShare = async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       })
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream
+        videoRef.current.srcObject = mediaStream
         await videoRef.current.play()
       }
 
-      setScreenShareState({ isActive: true, stream })
+      setStream(mediaStream)
       addMessage("system", "🖥️ 画面共有を開始しました。")
 
       if (isAutoAnalysis) {
@@ -245,8 +247,8 @@ export default function AIVisionChatPage() {
       }
 
       // Handle stream end
-      stream.getVideoTracks()[0].addEventListener("ended", () => {
-        stopScreenShare()
+      mediaStream.getVideoTracks()[0].addEventListener("ended", () => {
+        stopCapture()
       })
     } catch (error) {
       console.error("Screen share failed:", error)
@@ -254,13 +256,14 @@ export default function AIVisionChatPage() {
     }
   }
 
-  const stopScreenShare = () => {
-    if (screenShareState.stream) {
-      screenShareState.stream.getTracks().forEach((track) => track.stop())
+  const stopCapture = () => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop())
+      setStream(null)
     }
-    setScreenShareState({ isActive: false, stream: null })
+    setIsStarted(false)
     stopPeriodicAnalysis()
-    addMessage("system", "🖥️ 画面共有を停止しました。")
+    addMessage("system", "キャプチャを停止しました。")
   }
 
   // Analysis functions
@@ -297,49 +300,28 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Voice functions
-  const startVoiceRecognition = () => {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      setError("音声認識がサポートされていません。")
-      return
+  // Message functions
+  const addMessage = (
+    type: "user" | "ai" | "system",
+    content: string,
+    imageData?: string,
+    metadata?: any,
+    isVoice?: boolean,
+  ) => {
+    const message: ChatMessage = {
+      id: Date.now().toString(),
+      type,
+      content,
+      imageData,
+      timestamp: new Date(),
+      isVoice,
+      metadata,
     }
 
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
-    const recognition = new SpeechRecognition()
+    setChatMessages((prev) => [...prev, message])
 
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.lang = "ja-JP"
-
-    recognition.onstart = () => {
-      setIsListening(true)
-      addMessage("system", "🎤 音声入力を開始しました。話してください。")
-    }
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      setUserInput(transcript)
-      addMessage("user", `🎤 ${transcript}`, undefined, undefined, true)
-    }
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error)
-      setError(`音声認識エラー: ${event.error}`)
-      setIsListening(false)
-    }
-
-    recognition.onend = () => {
-      setIsListening(false)
-    }
-
-    recognitionRef.current = recognition
-    recognition.start()
-  }
-
-  const stopVoiceRecognition = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-      setIsListening(false)
+    if (type === "ai" && isVoiceEnabled) {
+      speakText(content)
     }
   }
 
@@ -375,31 +357,6 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Message functions
-  const addMessage = (
-    type: "user" | "ai" | "system",
-    content: string,
-    imageData?: string,
-    metadata?: any,
-    isVoice?: boolean,
-  ) => {
-    const message: ChatMessage = {
-      id: Date.now().toString(),
-      type,
-      content,
-      imageData,
-      timestamp: new Date(),
-      isVoice,
-      metadata,
-    }
-
-    setChatMessages((prev) => [...prev, message])
-
-    if (type === "ai" && isVoiceEnabled) {
-      speakText(content)
-    }
-  }
-
   // Analysis function
   const handleAnalyze = async (isAutomatic = false) => {
     const imageData = captureFrame()
@@ -432,7 +389,7 @@ export default function AIVisionChatPage() {
         body: JSON.stringify({
           imageBase64: base64Image,
           mimeType: "image/jpeg",
-          category: "general",
+          category: "coffee_maker",
           analysisType: systemPrompt,
           chatHistory: chatMessages
             .filter((msg) => msg.type === "user" || msg.type === "ai")
@@ -469,6 +426,20 @@ export default function AIVisionChatPage() {
     }
   }
 
+  // Send message function
+  const handleSendMessage = () => {
+    if (!userInput.trim() || isLoading) return
+
+    if (isStarted) {
+      handleAnalyze()
+    } else {
+      // Text-only chat
+      addMessage("user", userInput.trim())
+      setUserInput("")
+      // Add AI response logic here if needed
+    }
+  }
+
   // RAG functions
   const handleRAGImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -484,14 +455,19 @@ export default function AIVisionChatPage() {
         return
       }
 
-      setNewRAGEntry((prev) => ({ ...prev, image: file }))
+      if (editingRAGEntry) {
+        setEditingRAGEntry((prev) => ({ ...prev!, image: file }) as any)
+      } else {
+        setNewRAGEntry((prev) => ({ ...prev, image: file }))
+      }
       setError(null)
     }
   }
 
   const saveRAGEntry = async () => {
-    if (!newRAGEntry.title || !newRAGEntry.content || !newRAGEntry.image) {
-      setError("タイトル、内容、画像は必須です。")
+    const entry = editingRAGEntry || newRAGEntry
+    if (!entry.title || !entry.content) {
+      setError("タイトルと内容は必須です。")
       return
     }
 
@@ -499,51 +475,77 @@ export default function AIVisionChatPage() {
     setError(null)
 
     try {
-      // Convert image to base64
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => {
-          const result = reader.result as string
-          resolve(result.split(",")[1])
-        }
-        reader.onerror = reject
-        reader.readAsDataURL(newRAGEntry.image!)
-      })
+      let imageBase64 = null
+      let mimeType = null
 
-      const response = await fetch("/api/generic-rag/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entries: [
-            {
-              image: base64,
-              mimeType: newRAGEntry.image!.type,
-              iconName: newRAGEntry.iconName || newRAGEntry.title,
-              iconDescription: newRAGEntry.iconDescription || newRAGEntry.content,
-              content: newRAGEntry.content,
-              category: newRAGEntry.category,
-              tags: newRAGEntry.tags
-                .split(",")
-                .map((tag) => tag.trim())
-                .filter(Boolean),
-            },
-          ],
-        }),
-      })
+      if (entry.image) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = () => {
+            const result = reader.result as string
+            resolve(result.split(",")[1])
+          }
+          reader.onerror = reject
+          reader.readAsDataURL(entry.image!)
+        })
+        imageBase64 = base64
+        mimeType = entry.image.type
+      }
+
+      const tags = entry.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+
+      const requestData = {
+        title: entry.title,
+        content: entry.content,
+        category: entry.category,
+        tags,
+        iconName: entry.iconName || entry.title,
+        iconDescription: entry.iconDescription || entry.content,
+        imageBase64,
+        mimeType,
+      }
+
+      let response
+      if (editingRAGEntry) {
+        // Update existing document
+        response = await fetch("/api/supabase/rag-documents", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editingRAGEntry.id, ...requestData }),
+        })
+      } else {
+        // Create new document
+        response = await fetch("/api/supabase/rag-documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestData),
+        })
+      }
 
       const result = await response.json()
 
       if (result.success) {
-        addMessage("system", `✅ RAG文書「${newRAGEntry.title}」をSupabaseに追加しました。`)
-        setNewRAGEntry({
-          title: "",
-          content: "",
-          iconName: "",
-          iconDescription: "",
-          category: "general",
-          tags: "",
-          image: null,
-        })
+        addMessage("system", `✅ RAG文書「${entry.title}」を${editingRAGEntry ? "更新" : "追加"}しました。`)
+
+        // Reset form
+        if (editingRAGEntry) {
+          setEditingRAGEntry(null)
+          setIsEditDialogOpen(false)
+        } else {
+          setNewRAGEntry({
+            title: "",
+            content: "",
+            iconName: "",
+            iconDescription: "",
+            category: "general",
+            tags: "",
+            image: null,
+          })
+        }
+
         if (ragImageInputRef.current) ragImageInputRef.current.value = ""
         loadRAGDocuments()
       } else {
@@ -555,6 +557,37 @@ export default function AIVisionChatPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const deleteRAGEntry = async (id: string) => {
+    if (!confirm("この文書を削除しますか？")) return
+
+    try {
+      const response = await fetch(`/api/supabase/rag-documents?id=${id}`, {
+        method: "DELETE",
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        addMessage("system", "✅ RAG文書を削除しました。")
+        loadRAGDocuments()
+      } else {
+        setError(result.error || "RAG文書の削除に失敗しました。")
+      }
+    } catch (error) {
+      console.error("RAG delete error:", error)
+      setError("RAG文書の削除中にエラーが発生しました。")
+    }
+  }
+
+  const startEditRAGEntry = (doc: RAGDocument) => {
+    setEditingRAGEntry({
+      ...doc,
+      tags: doc.tags.join(", "),
+      image: null,
+    } as any)
+    setIsEditDialogOpen(true)
   }
 
   // Main control functions
@@ -570,14 +603,10 @@ export default function AIVisionChatPage() {
   }
 
   const handleStop = () => {
-    setIsStarted(false)
-    stopCamera()
-    stopScreenShare()
-    stopVoiceRecognition()
+    stopCapture()
     setChatMessages([])
     setUserInput("")
     setError(null)
-    addMessage("system", "⏹️ AI Vision Chatを停止しました。")
   }
 
   // Calculate video area size - much larger on mobile when started
@@ -659,13 +688,7 @@ export default function AIVisionChatPage() {
               {/* Video Area */}
               <div className={getVideoAreaClasses()}>
                 {isStarted ? (
-                  <video
-                    ref={videoRef}
-                    className="w-full h-full object-cover"
-                    playsInline
-                    muted
-                    style={{ transform: cameraState.facingMode === "user" ? "scaleX(-1)" : "none" }}
-                  />
+                  <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
                 ) : (
                   <div className="text-gray-500 text-center">
                     <div className="mb-2">
@@ -679,16 +702,6 @@ export default function AIVisionChatPage() {
                   </div>
                 )}
               </div>
-
-              {/* Camera Controls */}
-              {isStarted && inputMode === "camera" && (
-                <div className="flex justify-center gap-2">
-                  <Button onClick={switchCamera} variant="outline" size="sm">
-                    <Camera className="w-4 h-4 mr-2" />
-                    カメラ切替
-                  </Button>
-                </div>
-              )}
 
               {/* RAG Entry Selection */}
               {ragDocuments.length > 0 && (
@@ -785,25 +798,19 @@ export default function AIVisionChatPage() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault()
-                      if (isStarted && !isLoading) {
-                        handleAnalyze()
-                      }
+                      handleSendMessage()
                     }
                   }}
                 />
                 <div className="flex flex-col gap-2">
                   <Button
-                    onClick={() => handleAnalyze()}
-                    disabled={!isStarted || isLoading}
+                    onClick={handleSendMessage}
+                    disabled={!userInput.trim() || isLoading}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </Button>
-                  <Button
-                    onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
-                    variant="outline"
-                    disabled={!isStarted}
-                  >
+                  <Button onClick={isListening ? () => {} : () => {}} variant="outline" disabled={!isStarted}>
                     {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                   </Button>
                 </div>
@@ -838,10 +845,18 @@ export default function AIVisionChatPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="general_assistant">一般アシスタント</SelectItem>
-                      <SelectItem value="technical_support">技術サポート</SelectItem>
-                      <SelectItem value="coffee_indicator_analysis">コーヒーメーカー分析</SelectItem>
-                      <SelectItem value="default_support">デフォルトサポート</SelectItem>
+                      {systemPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          <div className="flex items-center gap-2">
+                            {prompt.name}
+                            {prompt.is_default && (
+                              <Badge variant="default" className="text-xs">
+                                デフォルト
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -901,10 +916,11 @@ export default function AIVisionChatPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="general">一般</SelectItem>
-                        <SelectItem value="maintenance">メンテナンス</SelectItem>
-                        <SelectItem value="troubleshooting">トラブルシューティング</SelectItem>
-                        <SelectItem value="safety">安全</SelectItem>
+                        {CATEGORIES.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -988,10 +1004,10 @@ export default function AIVisionChatPage() {
                   <Database className="w-4 h-4" />
                   登録済みRAG文書 ({ragDocuments.length}件)
                 </h4>
-                <ScrollArea className="h-48">
+                <ScrollArea className="h-64">
                   <div className="space-y-2">
                     {ragDocuments.map((doc) => (
-                      <div key={doc.id} className="flex items-center justify-between p-2 border rounded">
+                      <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <ImageIcon className="w-4 h-4" />
@@ -1009,17 +1025,25 @@ export default function AIVisionChatPage() {
                             </div>
                           )}
                         </div>
-                        <Button
-                          onClick={() => setSelectedRAGEntry(selectedRAGEntry === doc.id ? "none" : doc.id)}
-                          variant={selectedRAGEntry === doc.id ? "default" : "outline"}
-                          size="sm"
-                        >
-                          {selectedRAGEntry === doc.id ? (
-                            <CheckCircle className="w-4 h-4" />
-                          ) : (
-                            <Link className="w-4 h-4" />
-                          )}
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => setSelectedRAGEntry(selectedRAGEntry === doc.id ? "none" : doc.id)}
+                            variant={selectedRAGEntry === doc.id ? "default" : "outline"}
+                            size="sm"
+                          >
+                            {selectedRAGEntry === doc.id ? (
+                              <CheckCircle className="w-4 h-4" />
+                            ) : (
+                              <Link className="w-4 h-4" />
+                            )}
+                          </Button>
+                          <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button onClick={() => deleteRAGEntry(doc.id)} variant="outline" size="sm">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1029,6 +1053,123 @@ export default function AIVisionChatPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Edit RAG Document Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="w-5 h-5" />
+              RAG文書を編集
+            </DialogTitle>
+          </DialogHeader>
+          {editingRAGEntry && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="edit-title">文書タイトル</Label>
+                  <Input
+                    id="edit-title"
+                    value={editingRAGEntry.title}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, title: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-category">カテゴリ</Label>
+                  <Select
+                    value={editingRAGEntry.category}
+                    onValueChange={(value) => setEditingRAGEntry((prev) => ({ ...prev!, category: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((category) => (
+                        <SelectItem key={category.value} value={category.value}>
+                          {category.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="edit-icon-name">アイコン名</Label>
+                  <Input
+                    id="edit-icon-name"
+                    value={editingRAGEntry.icon_name || ""}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, icon_name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-tags">タグ (カンマ区切り)</Label>
+                  <Input
+                    id="edit-tags"
+                    value={(editingRAGEntry as any).tags}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, tags: e.target.value }) as any)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="edit-icon-description">アイコン説明</Label>
+                <Textarea
+                  id="edit-icon-description"
+                  value={editingRAGEntry.icon_description || ""}
+                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, icon_description: e.target.value }))}
+                  rows={2}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-content">文書内容</Label>
+                <Textarea
+                  id="edit-content"
+                  value={editingRAGEntry.content}
+                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, content: e.target.value }))}
+                  rows={4}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-image">新しい画像 (任意)</Label>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => ragImageInputRef.current?.click()}
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    画像を選択
+                  </Button>
+                  {(editingRAGEntry as any).image && (
+                    <span className="text-sm text-gray-600">{(editingRAGEntry as any).image.name}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <Button onClick={saveRAGEntry} disabled={isLoading} className="flex-1">
+                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  更新
+                </Button>
+                <Button
+                  onClick={() => {
+                    setEditingRAGEntry(null)
+                    setIsEditDialogOpen(false)
+                  }}
+                  variant="outline"
+                >
+                  <X className="w-4 h-4 mr-2" />
+                  キャンセル
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Hidden canvas for image capture */}
       <canvas ref={canvasRef} className="hidden" />

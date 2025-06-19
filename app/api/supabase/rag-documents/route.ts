@@ -50,7 +50,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { title, content, category, tags } = await request.json()
+    const { title, content, category, tags, iconName, iconDescription, imageBase64, mimeType } = await request.json()
 
     if (!title || !content) {
       return NextResponse.json({ success: false, error: "Title and content are required" }, { status: 400 })
@@ -69,13 +69,58 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Generate image embedding if image is provided
+    const imageEmbedding = null
+    if (imageBase64 && mimeType) {
+      try {
+        const embeddingResponse = await fetch("/api/generic-rag/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entries: [
+              {
+                image: imageBase64,
+                mimeType,
+                iconName: iconName || title,
+                iconDescription: iconDescription || content,
+                content,
+                category: category || "general",
+                tags: Array.isArray(tags) ? tags : [],
+              },
+            ],
+          }),
+        })
+
+        const embeddingResult = await embeddingResponse.json()
+        if (embeddingResult.success && embeddingResult.results?.[0]?.success) {
+          return NextResponse.json({
+            success: true,
+            document: { id: embeddingResult.results[0].id },
+            message: "Document registered successfully with image embedding",
+          })
+        }
+      } catch (embeddingError) {
+        console.error("Image embedding error:", embeddingError)
+        // Continue with text-only registration
+      }
+    }
+
+    // Fallback to text-only registration
     const { data, error } = await supabaseAdmin
       .from("rag_documents")
       .insert({
         title,
         content,
         category: category || "general",
-        tags: tags || [],
+        tags: Array.isArray(tags) ? tags : [],
+        icon_name: iconName,
+        icon_description: iconDescription,
+        source: "manual_entry",
+        is_active: true,
+        metadata: {
+          registrationTimestamp: new Date().toISOString(),
+          hasImage: !!imageBase64,
+        },
       })
       .select()
       .single()
@@ -89,6 +134,81 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("RAG document creation error:", error)
     return NextResponse.json({ success: false, error: "Failed to create RAG document" }, { status: 500 })
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { id, title, content, category, tags, iconName, iconDescription, imageBase64, mimeType } =
+      await request.json()
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Document ID is required" }, { status: 400 })
+    }
+
+    if (!title || !content) {
+      return NextResponse.json({ success: false, error: "Title and content are required" }, { status: 400 })
+    }
+
+    // Update the document
+    const updateData: any = {
+      title,
+      content,
+      category: category || "general",
+      tags: Array.isArray(tags) ? tags : [],
+      icon_name: iconName,
+      icon_description: iconDescription,
+      updated_at: new Date().toISOString(),
+    }
+
+    // If new image is provided, generate new embedding
+    if (imageBase64 && mimeType) {
+      try {
+        const embeddingResponse = await fetch("/api/generic-rag/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entries: [
+              {
+                image: imageBase64,
+                mimeType,
+                iconName: iconName || title,
+                iconDescription: iconDescription || content,
+                content,
+                category: category || "general",
+                tags: Array.isArray(tags) ? tags : [],
+              },
+            ],
+          }),
+        })
+
+        const embeddingResult = await embeddingResponse.json()
+        if (embeddingResult.success && embeddingResult.results?.[0]?.success) {
+          // Delete the old document and return the new one
+          await supabaseAdmin.from("rag_documents").delete().eq("id", id)
+          return NextResponse.json({
+            success: true,
+            document: { id: embeddingResult.results[0].id },
+            message: "Document updated successfully with new image embedding",
+          })
+        }
+      } catch (embeddingError) {
+        console.error("Image embedding error:", embeddingError)
+        // Continue with text-only update
+      }
+    }
+
+    const { data, error } = await supabaseAdmin.from("rag_documents").update(updateData).eq("id", id).select().single()
+
+    if (error) {
+      console.error("Supabase error:", error)
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true, document: data })
+  } catch (error) {
+    console.error("RAG document update error:", error)
+    return NextResponse.json({ success: false, error: "Failed to update RAG document" }, { status: 500 })
   }
 }
 

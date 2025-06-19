@@ -348,21 +348,65 @@ export default function AIVisionChatPage() {
     addMessage("system", "キャプチャを停止しました。")
   }
 
-  // Analysis functions
+  // Fixed Analysis functions
   const captureFrame = (): string | null => {
-    if (!videoRef.current || !canvasRef.current) return null
+    try {
+      if (!videoRef.current || !canvasRef.current) {
+        console.error("Video or canvas ref not available")
+        return null
+      }
 
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext("2d")
+      const video = videoRef.current
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext("2d")
 
-    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return null
+      if (!ctx) {
+        console.error("Canvas context not available")
+        return null
+      }
 
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    ctx.drawImage(video, 0, 0)
+      // Check if video is ready and has dimensions
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        console.error("Video not ready or has no dimensions")
+        return null
+      }
 
-    return canvas.toDataURL("image/jpeg", 0.8)
+      // Check if video is playing
+      if (video.paused || video.ended) {
+        console.error("Video is paused or ended")
+        return null
+      }
+
+      // Set canvas dimensions to match video
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+
+      // Clear canvas and draw video frame
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+      // Convert to base64
+      const dataURL = canvas.toDataURL("image/jpeg", 0.8)
+
+      // Validate the captured image
+      if (dataURL === "data:,") {
+        console.error("Canvas is empty - no image captured")
+        return null
+      }
+
+      console.log("Image captured successfully:", {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        dataURLLength: dataURL.length,
+      })
+
+      return dataURL
+    } catch (error) {
+      console.error("Error capturing frame:", error)
+      return null
+    }
   }
 
   const startPeriodicAnalysis = () => {
@@ -439,13 +483,19 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Intelligent Analysis function - automatically finds relevant RAG documents
+  // Enhanced Intelligent Analysis function
   const handleIntelligentAnalyze = async (isAutomatic = false) => {
+    console.log("Starting intelligent analysis...")
+
     const imageData = captureFrame()
     if (!imageData) {
+      const errorMsg =
+        "画像をキャプチャできませんでした。カメラまたは画面共有が正常に動作していることを確認してください。"
       if (!isAutomatic) {
-        setError("画像をキャプチャできませんでした。")
+        setError(errorMsg)
+        addMessage("system", `❌ ${errorMsg}`)
       }
+      console.error("Failed to capture image")
       return
     }
 
@@ -463,6 +513,8 @@ export default function AIVisionChatPage() {
 
     try {
       const base64Image = imageData.split(",")[1]
+
+      console.log("Sending request to intelligent RAG API...")
 
       const response = await fetch("/api/intelligent-rag/analyze", {
         method: "POST",
@@ -483,6 +535,7 @@ export default function AIVisionChatPage() {
       })
 
       const result = await response.json()
+      console.log("Received response from intelligent RAG API:", result)
 
       if (result.success) {
         // Add AI response with intelligent analysis metadata
@@ -520,12 +573,15 @@ ${result.relevantDocuments
       } else {
         if (!isAutomatic) {
           setError(result.error || "分析に失敗しました。")
+          addMessage("system", `❌ 分析エラー: ${result.error || "不明なエラー"}`)
         }
       }
     } catch (error) {
       if (!isAutomatic) {
         console.error("Intelligent analysis error:", error)
-        setError("インテリジェント分析中にエラーが発生しました。")
+        const errorMsg = "インテリジェント分析中にエラーが発生しました。"
+        setError(errorMsg)
+        addMessage("system", `❌ ${errorMsg}`)
       }
     } finally {
       setIsLoading(false)
@@ -729,10 +785,16 @@ ${result.relevantDocuments
     }
   }
 
+  // Fixed RAG editing function
   const startEditRAGEntry = (doc: RAGDocument) => {
+    console.log("Starting to edit RAG entry:", doc)
+
+    // Ensure tags is always an array
+    const tagsArray = Array.isArray(doc.tags) ? doc.tags : []
+
     setEditingRAGEntry({
       ...doc,
-      tags: doc.tags.join(", "),
+      tags: tagsArray, // Keep as array for internal use
       image: null,
     } as any)
     setIsEditDialogOpen(true)
@@ -1183,7 +1245,7 @@ ${result.relevantDocuments
                             <Badge variant="outline">{doc.category}</Badge>
                           </div>
                           <p className="text-sm text-gray-600 mt-1">{doc.content.substring(0, 100)}...</p>
-                          {doc.tags.length > 0 && (
+                          {doc.tags && doc.tags.length > 0 && (
                             <div className="flex gap-1 mt-1">
                               {doc.tags.slice(0, 3).map((tag, index) => (
                                 <Badge key={index} variant="secondary" className="text-xs">
@@ -1211,7 +1273,7 @@ ${result.relevantDocuments
         </CardContent>
       </Card>
 
-      {/* Edit RAG Document Dialog */}
+      {/* Fixed Edit RAG Document Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1222,7 +1284,7 @@ ${result.relevantDocuments
           </DialogHeader>
           {editingRAGEntry && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="edit-rag-title">文書タイトル</Label>
                   <Input
@@ -1253,13 +1315,13 @@ ${result.relevantDocuments
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="edit-rag-icon-name">アイコン名</Label>
                   <Input
                     id="edit-rag-icon-name"
-                    value={editingRAGEntry.iconName || ""}
-                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, iconName: e.target.value }) as any)}
+                    value={editingRAGEntry.icon_name || ""}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, icon_name: e.target.value }) as any)}
                     placeholder="例: 警告ランプ"
                   />
                 </div>
@@ -1268,10 +1330,17 @@ ${result.relevantDocuments
                   <Label htmlFor="edit-rag-tags">タグ (カンマ区切り)</Label>
                   <Input
                     id="edit-rag-tags"
-                    value={editingRAGEntry.tags.join(", ")}
+                    value={Array.isArray(editingRAGEntry.tags) ? editingRAGEntry.tags.join(", ") : ""}
                     onChange={(e) =>
                       setEditingRAGEntry(
-                        (prev) => ({ ...prev!, tags: e.target.value.split(", ").map((tag) => tag.trim()) }) as any,
+                        (prev) =>
+                          ({
+                            ...prev!,
+                            tags: e.target.value
+                              .split(",")
+                              .map((tag) => tag.trim())
+                              .filter(Boolean),
+                          }) as any,
                       )
                     }
                     placeholder="例: 警告, ランプ, 赤色"
@@ -1283,8 +1352,10 @@ ${result.relevantDocuments
                 <Label htmlFor="edit-rag-icon-description">アイコン説明</Label>
                 <Textarea
                   id="edit-rag-icon-description"
-                  value={editingRAGEntry.iconDescription || ""}
-                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, iconDescription: e.target.value }) as any)}
+                  value={editingRAGEntry.icon_description || ""}
+                  onChange={(e) =>
+                    setEditingRAGEntry((prev) => ({ ...prev!, icon_description: e.target.value }) as any)
+                  }
                   placeholder="アイコンの詳細な説明を入力..."
                   rows={2}
                 />
@@ -1312,7 +1383,9 @@ ${result.relevantDocuments
                     <Upload className="w-4 h-4" />
                     画像を選択
                   </Button>
-                  {editingRAGEntry.image && <span className="text-sm text-gray-600">{editingRAGEntry.image.name}</span>}
+                  {(editingRAGEntry as any).image && (
+                    <span className="text-sm text-gray-600">{(editingRAGEntry as any).image.name}</span>
+                  )}
                 </div>
                 <input
                   ref={ragImageInputRef}
@@ -1331,6 +1404,9 @@ ${result.relevantDocuments
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Hidden canvas for image capture */}
+      <canvas ref={canvasRef} className="hidden" />
     </div>
   )
 }

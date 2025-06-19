@@ -15,34 +15,114 @@ interface AnalysisRequest {
   ipAddress?: string
 }
 
-interface SimilarIssue {
-  id: string
-  title: string
-  content: string
-  icon_name?: string
-  icon_description?: string
-  category: string
-  subcategory?: string
-  issue_type: string
-  severity_level: string
-  urgency_level: string
-  visual_indicators: string[]
-  indicator_states: string[]
-  difficulty_level: string
-  estimated_time_minutes: number
-  tools_required: string[]
-  safety_warnings: string[]
-  tags: string[]
-  metadata: any
-  similarity: number
+// Enhanced logging function
+async function logAnalysisEvent(
+  sessionId: string,
+  eventType: string,
+  analysisData?: any,
+  error?: string,
+  processingTime?: number,
+) {
+  try {
+    const logEntry = {
+      session_id: sessionId,
+      event_type: eventType,
+      timestamp: new Date().toISOString(),
+      analysis_data: analysisData ? JSON.stringify(analysisData) : null,
+      error_message: error,
+      processing_time_ms: processingTime,
+    }
+
+    console.log(`[Analysis] ${eventType}:`, logEntry)
+
+    // Store in database for analytics
+    await supabaseAdmin.from("analysis_logs").insert(logEntry).select().single()
+  } catch (logError) {
+    console.error("Failed to log analysis event:", logError)
+  }
 }
 
-// Generate image embeddings using Google's multimodal embedding
+// Get analysis configuration with fallback
+async function getAnalysisConfiguration(analysisType: string, category?: string) {
+  try {
+    console.log(`[Analysis Config] Fetching configuration for type: ${analysisType}, category: ${category}`)
+
+    // Try to get from database first
+    const { data: prompts, error: promptError } = await supabaseAdmin
+      .from("analysis_prompts")
+      .select("*")
+      .eq("analysis_focus", analysisType)
+      .eq("is_active", true)
+      .order("priority", { ascending: false })
+
+    if (promptError) {
+      console.warn(`[Analysis Config] Database error: ${promptError.message}`)
+    } else if (prompts && prompts.length > 0) {
+      console.log(`[Analysis Config] Found ${prompts.length} prompts in database`)
+      return {
+        analysisPrompt: prompts[0].prompt_text,
+        source: "database",
+      }
+    }
+
+    // Fallback to hardcoded prompts
+    console.log(`[Analysis Config] Using fallback configuration`)
+
+    const fallbackPrompts = {
+      coffee_maker_expert: `あなたはコーヒーメーカーの専門技術者です。画像を詳細に分析し、以下の点に注目してください：
+
+1. インジケーターランプの状態（点灯、点滅、消灯）
+2. ランプの色（赤、緑、青、オレンジなど）
+3. 表示されているアイコンやシンボル
+4. 機器の全体的な状態
+
+特に以下の問題を特定してください：
+- カス受け関連の問題
+- 給水タンクの問題
+- 抽出ユニットの問題
+- メンテナンス要求
+- エラー状態
+
+具体的で実用的な解決策を提供してください。`,
+
+      general_assistant: `画像を詳細に分析し、以下の情報を提供してください：
+
+1. 画像に写っている主要な物体や要素
+2. 注目すべき特徴や状態
+3. 問題や異常が見られる場合はその詳細
+4. 推奨される対処法や次のステップ
+
+分析は正確で具体的に行い、ユーザーにとって有用な情報を提供してください。`,
+
+      technical_support: `技術サポートの専門家として画像を分析してください：
+
+1. 機器の状態と動作状況
+2. エラーインジケーターや警告表示
+3. 物理的な問題や異常
+4. メンテナンスの必要性
+
+技術的に正確で、段階的な解決手順を提供してください。`,
+    }
+
+    const prompt = fallbackPrompts[analysisType as keyof typeof fallbackPrompts] || fallbackPrompts.general_assistant
+
+    return {
+      analysisPrompt: prompt,
+      source: "fallback",
+    }
+  } catch (error) {
+    console.error(`[Analysis Config] Error: ${error}`)
+    return {
+      analysisPrompt: "画像を分析し、詳細な説明を提供してください。",
+      source: "default",
+    }
+  }
+}
+
+// Generate image embedding for similarity search
 async function generateImageEmbedding(imageBase64: string, mimeType: string): Promise<number[] | null> {
   try {
-    // Note: This is a conceptual implementation
-    // In production, you would use Google Cloud Vertex AI multimodal embedding endpoint
-    // For now, we'll use Gemini's embedding capability as a placeholder
+    console.log(`[Embedding] Generating embedding for similarity search`)
 
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
 
@@ -55,106 +135,52 @@ async function generateImageEmbedding(imageBase64: string, mimeType: string): Pr
 
     let embedding = result.embedding.values
 
-    // Ensure exactly 1408 dimensions
-    if (embedding.length !== 1408) {
-      console.warn(`Embedding dimension mismatch: got ${embedding.length}, expected 1408`)
+    if (!embedding || embedding.length === 0) {
+      throw new Error("Empty embedding returned")
+    }
 
-      if (embedding.length < 1408) {
-        embedding = [...embedding, ...Array(1408 - embedding.length).fill(0)]
+    // Ensure 1408 dimensions
+    const targetDimensions = 1408
+    if (embedding.length !== targetDimensions) {
+      if (embedding.length < targetDimensions) {
+        embedding = [...embedding, ...Array(targetDimensions - embedding.length).fill(0)]
       } else {
-        embedding = embedding.slice(0, 1408)
+        embedding = embedding.slice(0, targetDimensions)
       }
     }
 
+    console.log(`[Embedding] Generated embedding with ${embedding.length} dimensions`)
     return embedding
   } catch (error) {
-    console.error("Error generating image embedding:", error)
+    console.error(`[Embedding] Error: ${error}`)
     return null
   }
 }
 
-// Get analysis prompt from database
-async function getAnalysisPrompt(analysisType: string, category?: string): Promise<string | null> {
+// Search for similar issues in the knowledge base
+async function searchSimilarIssues(embedding: number[], category?: string) {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("analysis_prompts")
-      .select("prompt_text")
-      .eq("analysis_focus", analysisType)
-      .eq("is_active", true)
-      .or(`category.is.null,category.eq.${category || "general"}`)
-      .order("priority", { ascending: false })
-      .order("category", { ascending: false }) // Prefer category-specific prompts
-      .limit(1)
-      .single()
+    console.log(`[Similarity Search] Searching for similar issues, category: ${category}`)
 
-    if (error) {
-      console.error("Error fetching analysis prompt:", error)
-      return null
-    }
-
-    return data.prompt_text
-  } catch (error) {
-    console.error("Error in getAnalysisPrompt:", error)
-    return null
-  }
-}
-
-// Get response generation prompt
-async function getResponsePrompt(): Promise<string | null> {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("analysis_prompts")
-      .select("prompt_text")
-      .eq("prompt_type", "response")
-      .eq("is_active", true)
-      .order("priority", { ascending: false })
-      .limit(1)
-      .single()
-
-    if (error) {
-      console.error("Error fetching response prompt:", error)
-      return null
-    }
-
-    return data.prompt_text
-  } catch (error) {
-    console.error("Error in getResponsePrompt:", error)
-    return null
-  }
-}
-
-// Log interaction for debugging and analytics
-async function logInteraction(
-  sessionId: string,
-  interactionType: string,
-  category?: string,
-  imageMetadata?: any,
-  analysisParameters?: any,
-  similarIssuesFound?: number,
-  responseGenerated?: boolean,
-  processingTimeMs?: number,
-  errorType?: string,
-  errorMessage?: string,
-  userAgent?: string,
-  ipAddress?: string,
-) {
-  try {
-    await supabaseAdmin.rpc("log_interaction", {
-      p_session_id: sessionId,
-      p_interaction_type: interactionType,
-      p_category: category,
-      p_image_metadata: imageMetadata ? JSON.stringify(imageMetadata) : null,
-      p_analysis_parameters: analysisParameters ? JSON.stringify(analysisParameters) : null,
-      p_similar_issues_found: similarIssuesFound || 0,
-      p_response_generated: responseGenerated || false,
-      p_processing_time_ms: processingTimeMs,
-      p_error_type: errorType,
-      p_error_message: errorMessage,
-      p_user_agent: userAgent,
-      p_ip_address: ipAddress,
+    const { data: similarIssues, error: searchError } = await supabaseAdmin.rpc("search_similar_issues", {
+      query_embedding: embedding,
+      category_filter: category === "general" ? null : category,
+      issue_type_filter: null,
+      severity_filter: null,
+      match_threshold: 0.5,
+      match_count: 5,
     })
+
+    if (searchError) {
+      console.error(`[Similarity Search] Database error: ${searchError.message}`)
+      return []
+    }
+
+    console.log(`[Similarity Search] Found ${similarIssues?.length || 0} similar issues`)
+    return similarIssues || []
   } catch (error) {
-    console.error("Failed to log interaction:", error)
+    console.error(`[Similarity Search] Error: ${error}`)
+    return []
   }
 }
 
@@ -168,124 +194,46 @@ export async function POST(request: NextRequest) {
       imageBase64,
       mimeType,
       category: requestCategory = "general",
-      analysisType = "general",
+      analysisType = "coffee_maker_expert",
       chatHistory = [],
       sessionId: requestSessionId,
       userAgent,
       ipAddress,
     }: AnalysisRequest = await request.json()
 
-    sessionId = requestSessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    sessionId = requestSessionId || `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     category = requestCategory
+
+    console.log(`[Analysis] Starting session ${sessionId}`)
 
     // Validate required fields
     if (!imageBase64 || !mimeType) {
-      await logInteraction(
-        sessionId,
-        "error",
-        category,
-        null,
-        null,
-        0,
-        false,
-        Date.now() - startTime,
-        "validation_error",
-        "Missing image data or MIME type",
-        userAgent,
-        ipAddress,
-      )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Image data and MIME type are required.",
-        },
-        { status: 400 },
-      )
+      throw new Error("Image data and MIME type are required")
     }
 
     if (!process.env.GEMINI_API_KEY) {
-      await logInteraction(
-        sessionId,
-        "error",
-        category,
-        null,
-        null,
-        0,
-        false,
-        Date.now() - startTime,
-        "configuration_error",
-        "GEMINI_API_KEY not configured",
-        userAgent,
-        ipAddress,
-      )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "AI service is not properly configured.",
-        },
-        { status: 500 },
-      )
+      throw new Error("GEMINI_API_KEY not configured")
     }
 
-    // Log image upload
-    const imageMetadata = {
-      mimeType,
-      size: imageBase64.length,
+    await logAnalysisEvent(sessionId, "analysis_started", {
       category,
       analysisType,
-    }
+      imageSize: imageBase64.length,
+      mimeType,
+    })
 
-    await logInteraction(
-      sessionId,
-      "image_upload",
-      category,
-      imageMetadata,
-      { analysisType, category },
-      0,
-      false,
-      null,
-      null,
-      null,
-      userAgent,
-      ipAddress,
-    )
+    // Get analysis configuration
+    const config = await getAnalysisConfiguration(analysisType, category)
+    console.log(`[Analysis] Using ${config.source} configuration`)
 
-    // Step 1: Get analysis prompt
-    const analysisPrompt = await getAnalysisPrompt(analysisType, category)
-    if (!analysisPrompt) {
-      await logInteraction(
-        sessionId,
-        "error",
-        category,
-        imageMetadata,
-        null,
-        0,
-        false,
-        Date.now() - startTime,
-        "prompt_error",
-        "Could not retrieve analysis prompt",
-        userAgent,
-        ipAddress,
-      )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Could not retrieve analysis configuration from database.",
-        },
-        { status: 500 },
-      )
-    }
-
-    // Step 2: Perform image analysis
+    // Perform image analysis
+    console.log(`[Analysis] Analyzing image with Gemini`)
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
 
     const analysisResult = await model.generateContent({
       contents: [
         {
-          parts: [{ text: analysisPrompt }, { inlineData: { data: imageBase64, mimeType } }],
+          parts: [{ text: config.analysisPrompt }, { inlineData: { data: imageBase64, mimeType } }],
         },
       ],
       generationConfig: {
@@ -297,99 +245,33 @@ export async function POST(request: NextRequest) {
     })
 
     const imageAnalysis = analysisResult.response.text()
+    console.log(`[Analysis] Image analysis completed`)
 
-    // Step 3: Generate image embedding
+    // Generate embedding for similarity search
     const imageEmbedding = await generateImageEmbedding(imageBase64, mimeType)
-    if (!imageEmbedding) {
-      await logInteraction(
-        sessionId,
-        "error",
-        category,
-        imageMetadata,
-        { analysisType, category },
-        0,
-        false,
-        Date.now() - startTime,
-        "embedding_error",
-        "Failed to generate image embedding",
-        userAgent,
-        ipAddress,
-      )
+    let similarIssues = []
 
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Failed to generate image embedding for similarity search.",
-        },
-        { status: 500 },
-      )
+    if (imageEmbedding) {
+      similarIssues = await searchSimilarIssues(imageEmbedding, category)
     }
 
-    // Step 4: Search for similar issues
-    const { data: similarIssues, error: searchError } = await supabaseAdmin.rpc("search_similar_issues", {
-      query_embedding: imageEmbedding,
-      category_filter: category === "general" ? null : category,
-      issue_type_filter: null,
-      severity_filter: null,
-      match_threshold: 0.5, // Lower threshold for more results
-      match_count: 8,
-    })
-
-    if (searchError) {
-      console.error("Similarity search error:", searchError)
-      await logInteraction(
-        sessionId,
-        "error",
-        category,
-        imageMetadata,
-        { analysisType, category },
-        0,
-        false,
-        Date.now() - startTime,
-        "search_error",
-        searchError.message,
-        userAgent,
-        ipAddress,
-      )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Failed to search for similar issues in knowledge base.",
-        },
-        { status: 500 },
-      )
-    }
-
-    const typedSimilarIssues: SimilarIssue[] = similarIssues || []
-
-    // Step 5: Generate contextualized response
+    // Build context from similar issues
     let contextualInfo = ""
-    if (typedSimilarIssues.length > 0) {
-      contextualInfo = typedSimilarIssues
-        .slice(0, 5) // Limit to top 5 matches
+    if (similarIssues.length > 0) {
+      contextualInfo = similarIssues
+        .slice(0, 3)
         .map(
-          (issue, index) =>
+          (issue: any, index: number) =>
             `Similar Issue ${index + 1} (${(issue.similarity * 100).toFixed(1)}% match):
 Title: ${issue.title}
-Problem: ${issue.icon_name || "Unknown"} - ${issue.icon_description || "No description"}
-Category: ${issue.category}${issue.subcategory ? ` > ${issue.subcategory}` : ""}
-Issue Type: ${issue.issue_type}
-Severity: ${issue.severity_level} | Urgency: ${issue.urgency_level}
-Difficulty: ${issue.difficulty_level} | Est. Time: ${issue.estimated_time_minutes} min
-Visual Indicators: ${issue.visual_indicators?.join(", ") || "None"}
-Indicator States: ${issue.indicator_states?.join(", ") || "None"}
-Tools Required: ${issue.tools_required?.join(", ") || "None"}
-Safety Warnings: ${issue.safety_warnings?.join(", ") || "None"}
-Solution: ${issue.content}
-Tags: ${issue.tags?.join(", ") || "None"}`,
+Category: ${issue.category}
+Solution: ${issue.content}`,
         )
         .join("\n\n")
     }
 
-    // Get response generation prompt
-    const responsePrompt = await getResponsePrompt()
-    const systemInstruction = `${responsePrompt || "You are an expert troubleshooting assistant."}
+    // Generate final response
+    const systemInstruction = `Based on the image analysis and any similar issues found, provide a helpful, structured response.
 
 Image Analysis Results:
 ${imageAnalysis}
@@ -401,7 +283,7 @@ ${contextualInfo}`
     : "No similar issues found in knowledge base."
 }
 
-Based on the image analysis and any similar issues found, provide a helpful, structured response that prioritizes safety and provides clear, actionable guidance. Consider the chat history for context.`
+Provide a clear, actionable response that prioritizes safety and gives specific guidance.`
 
     const chat = model.startChat({
       generationConfig: {
@@ -430,56 +312,45 @@ Based on the image analysis and any similar issues found, provide a helpful, str
 
     const processingTime = Date.now() - startTime
 
-    // Log successful analysis
-    await logInteraction(
+    await logAnalysisEvent(
       sessionId,
-      "analysis_complete",
-      category,
-      imageMetadata,
-      { analysisType, category },
-      typedSimilarIssues.length,
-      true,
+      "analysis_completed",
+      {
+        category,
+        analysisType,
+        similarIssuesFound: similarIssues.length,
+        configSource: config.source,
+      },
+      undefined,
       processingTime,
-      null,
-      null,
-      userAgent,
-      ipAddress,
     )
+
+    console.log(`[Analysis] Session ${sessionId} completed successfully in ${processingTime}ms`)
 
     return NextResponse.json({
       success: true,
       response: finalResponse,
       imageAnalysis,
-      similarIssues: typedSimilarIssues,
+      similarIssues,
       category,
       analysisType,
-      matchCount: typedSimilarIssues.length,
+      matchCount: similarIssues.length,
       processingTimeMs: processingTime,
       sessionId,
+      configSource: config.source,
     })
   } catch (error) {
     const processingTime = Date.now() - startTime
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
 
-    console.error("Error in generic RAG analysis:", error)
+    console.error(`[Analysis] Session ${sessionId} failed:`, errorMessage)
 
-    await logInteraction(
-      sessionId,
-      "error",
-      category,
-      null,
-      null,
-      0,
-      false,
-      processingTime,
-      "analysis_error",
-      errorMessage,
-    )
+    await logAnalysisEvent(sessionId, "analysis_failed", { category }, errorMessage, processingTime)
 
     return NextResponse.json(
       {
         success: false,
-        error: `Analysis failed: ${errorMessage}`,
+        error: errorMessage,
         processingTimeMs: processingTime,
         sessionId,
       },

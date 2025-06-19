@@ -30,14 +30,15 @@ import {
   Upload,
   Save,
   Database,
-  ImageIcon,
-  Link,
   CheckCircle,
   Plus,
   Edit,
   Trash2,
   Send,
-  X,
+  Brain,
+  Zap,
+  Target,
+  Search,
 } from "lucide-react"
 
 interface ChatMessage {
@@ -48,10 +49,10 @@ interface ChatMessage {
   timestamp: Date
   isVoice?: boolean
   metadata?: {
-    analysisType?: string
+    extractedContext?: any
+    relevantDocuments?: any[]
     processingTime?: number
-    confidence?: number
-    linkedRAGEntry?: string
+    intelligentAnalysis?: boolean
   }
 }
 
@@ -103,7 +104,6 @@ export default function AIVisionChatPage() {
 
   // Analysis settings
   const [analysisFrequency, setAnalysisFrequency] = useState<number>(10)
-  const [systemPrompt, setSystemPrompt] = useState("coffee_maker_expert")
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true)
   const [isAutoAnalysis, setIsAutoAnalysis] = useState(false)
 
@@ -114,10 +114,9 @@ export default function AIVisionChatPage() {
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
 
-  // RAG state
+  // RAG state (for management only)
   const [ragDocuments, setRAGDocuments] = useState<RAGDocument[]>([])
   const [systemPrompts, setSystemPrompts] = useState<SystemPrompt[]>([])
-  const [selectedRAGEntry, setSelectedRAGEntry] = useState<string>("none")
   const [editingRAGEntry, setEditingRAGEntry] = useState<RAGDocument | null>(null)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [newRAGEntry, setNewRAGEntry] = useState({
@@ -157,16 +156,6 @@ export default function AIVisionChatPage() {
     loadRAGDocuments()
     loadSystemPrompts()
   }, [])
-
-  // Set default system prompt
-  useEffect(() => {
-    if (systemPrompts.length > 0) {
-      const defaultPrompt = systemPrompts.find((p) => p.is_default)
-      if (defaultPrompt) {
-        setSystemPrompt(defaultPrompt.id)
-      }
-    }
-  }, [systemPrompts])
 
   const loadRAGDocuments = async () => {
     try {
@@ -216,7 +205,10 @@ export default function AIVisionChatPage() {
       }
 
       setStream(mediaStream)
-      addMessage("system", "📷 カメラを開始しました。")
+      addMessage(
+        "system",
+        "📷 カメラを開始しました。画像を撮影すると、AIが自動的に関連する知識ベースを検索して回答します。",
+      )
 
       if (isAutoAnalysis) {
         startPeriodicAnalysis()
@@ -240,7 +232,10 @@ export default function AIVisionChatPage() {
       }
 
       setStream(mediaStream)
-      addMessage("system", "🖥️ 画面共有を開始しました。")
+      addMessage(
+        "system",
+        "🖥️ 画面共有を開始しました。画面をキャプチャすると、AIが自動的に関連する知識ベースを検索して回答します。",
+      )
 
       if (isAutoAnalysis) {
         startPeriodicAnalysis()
@@ -288,7 +283,7 @@ export default function AIVisionChatPage() {
 
     intervalRef.current = setInterval(() => {
       if (!isLoading) {
-        handleAnalyze(true)
+        handleIntelligentAnalyze(true)
       }
     }, analysisFrequency * 1000)
   }
@@ -357,8 +352,8 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Analysis function
-  const handleAnalyze = async (isAutomatic = false) => {
+  // Intelligent Analysis function - automatically finds relevant RAG documents
+  const handleIntelligentAnalyze = async (isAutomatic = false) => {
     const imageData = captureFrame()
     if (!imageData) {
       if (!isAutomatic) {
@@ -370,12 +365,11 @@ export default function AIVisionChatPage() {
     setIsLoading(true)
     setError(null)
 
-    const prompt = userInput.trim() || "この画像を分析してください。"
+    const prompt = userInput.trim() || "この画像を分析して、問題があれば解決方法を教えてください。"
 
     if (!isAutomatic) {
       addMessage("user", prompt, imageData, {
-        analysisType: systemPrompt,
-        linkedRAGEntry: selectedRAGEntry,
+        intelligentAnalysis: true,
       })
       setUserInput("")
     }
@@ -383,14 +377,13 @@ export default function AIVisionChatPage() {
     try {
       const base64Image = imageData.split(",")[1]
 
-      const response = await fetch("/api/generic-rag/analyze", {
+      const response = await fetch("/api/intelligent-rag/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageBase64: base64Image,
           mimeType: "image/jpeg",
-          category: "coffee_maker",
-          analysisType: systemPrompt,
+          userPrompt: prompt,
           chatHistory: chatMessages
             .filter((msg) => msg.type === "user" || msg.type === "ai")
             .slice(-10)
@@ -398,19 +391,45 @@ export default function AIVisionChatPage() {
               role: msg.type === "user" ? "user" : "model",
               parts: [{ text: msg.content }],
             })),
-          linkedRAGEntry: selectedRAGEntry,
+          sessionId: `session_${Date.now()}`,
         }),
       })
 
       const result = await response.json()
 
       if (result.success) {
+        // Add AI response with intelligent analysis metadata
         addMessage("ai", result.response, undefined, {
-          analysisType: systemPrompt,
+          extractedContext: result.extractedContext,
+          relevantDocuments: result.relevantDocuments,
           processingTime: result.processingTimeMs,
-          confidence: result.confidence,
-          linkedRAGEntry: selectedRAGEntry,
+          intelligentAnalysis: true,
         })
+
+        // Add system message showing what the AI detected and which documents it used
+        if (result.relevantDocuments && result.relevantDocuments.length > 0) {
+          const contextSummary = `🧠 **インテリジェント分析結果**
+
+**検出された内容:**
+- デバイス: ${result.extractedContext?.deviceType || "不明"}
+- カテゴリ: ${result.extractedContext?.primaryCategory || "一般"}
+- 問題: ${result.extractedContext?.detectedIssues?.join(", ") || "なし"}
+- 緊急度: ${result.extractedContext?.urgencyLevel || "中"}
+
+**自動選択された関連文書 (${result.relevantDocuments.length}件):**
+${result.relevantDocuments
+  .map((doc: any, index: number) => `${index + 1}. ${doc.title} (関連度: ${(doc.relevance_score * 100).toFixed(1)}%)`)
+  .join("\n")}
+
+⏱️ **処理時間**: ${result.processingTimeMs}ms`
+
+          addMessage("system", contextSummary)
+        } else {
+          addMessage(
+            "system",
+            `🧠 **インテリジェント分析完了**\n\n検出されたカテゴリ: ${result.extractedContext?.primaryCategory || "一般"}\n関連文書: 見つかりませんでした\n\n⏱️ 処理時間: ${result.processingTimeMs}ms`,
+          )
+        }
       } else {
         if (!isAutomatic) {
           setError(result.error || "分析に失敗しました。")
@@ -418,8 +437,8 @@ export default function AIVisionChatPage() {
       }
     } catch (error) {
       if (!isAutomatic) {
-        console.error("Analysis error:", error)
-        setError("分析中にエラーが発生しました。")
+        console.error("Intelligent analysis error:", error)
+        setError("インテリジェント分析中にエラーが発生しました。")
       }
     } finally {
       setIsLoading(false)
@@ -431,7 +450,7 @@ export default function AIVisionChatPage() {
     if (!userInput.trim() || isLoading) return
 
     if (isStarted) {
-      handleAnalyze()
+      handleIntelligentAnalyze()
     } else {
       // Text-only chat
       addMessage("user", userInput.trim())
@@ -440,7 +459,7 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // RAG functions
+  // RAG functions (for management only)
   const handleRAGImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
@@ -528,7 +547,10 @@ export default function AIVisionChatPage() {
       const result = await response.json()
 
       if (result.success) {
-        addMessage("system", `✅ RAG文書「${entry.title}」を${editingRAGEntry ? "更新" : "追加"}しました。`)
+        addMessage(
+          "system",
+          `✅ RAG文書「${entry.title}」を${editingRAGEntry ? "更新" : "追加"}しました。この文書は今後の画像分析で自動的に検索対象となります。`,
+        )
 
         // Reset form
         if (editingRAGEntry) {
@@ -593,7 +615,10 @@ export default function AIVisionChatPage() {
   // Main control functions
   const handleStart = async () => {
     setIsStarted(true)
-    addMessage("system", "🚀 AI Vision Chatを開始しました。")
+    addMessage(
+      "system",
+      "🚀 **インテリジェントAI Vision Chat**を開始しました。\n\n✨ **新機能**: 画像を分析すると、AIが自動的に最適な知識ベース文書を検索して回答します。手動での文書選択は不要です！",
+    )
 
     if (inputMode === "camera") {
       await startCamera()
@@ -629,10 +654,11 @@ export default function AIVisionChatPage() {
       <Card className="flex-grow flex flex-col">
         <CardHeader className="border-b">
           <CardTitle className="flex items-center gap-2">
-            <Camera className="w-6 h-6" />
-            AI Vision Chat
-            <Badge variant="secondary" className="ml-2">
-              Supabase
+            <Brain className="w-6 h-6" />
+            Intelligent AI Vision Chat
+            <Badge variant="default" className="ml-2">
+              <Zap className="w-3 h-3 mr-1" />
+              Auto RAG
             </Badge>
           </CardTitle>
         </CardHeader>
@@ -640,9 +666,9 @@ export default function AIVisionChatPage() {
         <CardContent className="flex-grow flex flex-col p-4">
           <Tabs defaultValue="chat" className="flex-grow flex flex-col">
             <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="chat">チャット</TabsTrigger>
+              <TabsTrigger value="chat">インテリジェントチャット</TabsTrigger>
               <TabsTrigger value="settings">設定</TabsTrigger>
-              <TabsTrigger value="rag">RAG文書管理</TabsTrigger>
+              <TabsTrigger value="rag">知識ベース管理</TabsTrigger>
             </TabsList>
 
             <TabsContent value="chat" className="flex-grow flex flex-col space-y-4">
@@ -685,6 +711,20 @@ export default function AIVisionChatPage() {
                 </div>
               </div>
 
+              {/* Intelligent Analysis Info */}
+              {isStarted && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-blue-800">
+                    <Target className="w-4 h-4" />
+                    <span className="font-medium">インテリジェント分析モード</span>
+                  </div>
+                  <p className="text-sm text-blue-700 mt-1">
+                    画像を分析すると、AIが自動的に関連する知識ベース文書（{ragDocuments.length}
+                    件）を検索して最適な回答を提供します。
+                  </p>
+                </div>
+              )}
+
               {/* Video Area */}
               <div className={getVideoAreaClasses()}>
                 {isStarted ? (
@@ -699,34 +739,10 @@ export default function AIVisionChatPage() {
                       )}
                     </div>
                     <p>開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始</p>
+                    <p className="text-sm mt-2">AIが自動的に関連文書を検索します</p>
                   </div>
                 )}
               </div>
-
-              {/* RAG Entry Selection */}
-              {ragDocuments.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="rag-select" className="text-sm font-medium">
-                    関連RAG文書:
-                  </Label>
-                  <Select value={selectedRAGEntry} onValueChange={setSelectedRAGEntry}>
-                    <SelectTrigger className="w-64">
-                      <SelectValue placeholder="関連文書を選択（任意）" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">なし</SelectItem>
-                      {ragDocuments.map((doc) => (
-                        <SelectItem key={doc.id} value={doc.id}>
-                          <div className="flex items-center gap-2">
-                            <Link className="w-4 h-4" />
-                            {doc.title}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
 
               {/* Error Display */}
               {error && (
@@ -763,10 +779,10 @@ export default function AIVisionChatPage() {
                           )}
                           <span className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</span>
                           {message.isVoice && <Mic className="w-3 h-3" />}
-                          {message.metadata?.linkedRAGEntry && (
+                          {message.metadata?.intelligentAnalysis && (
                             <Badge variant="outline" className="text-xs">
-                              <Link className="w-3 h-3 mr-1" />
-                              RAG連携
+                              <Brain className="w-3 h-3 mr-1" />
+                              AI分析
                             </Badge>
                           )}
                         </div>
@@ -781,6 +797,11 @@ export default function AIVisionChatPage() {
                         {message.metadata?.processingTime && (
                           <div className="text-xs opacity-70 mt-1">処理時間: {message.metadata.processingTime}ms</div>
                         )}
+                        {message.metadata?.relevantDocuments && message.metadata.relevantDocuments.length > 0 && (
+                          <div className="text-xs opacity-70 mt-1">
+                            自動選択文書: {message.metadata.relevantDocuments.length}件
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -792,7 +813,7 @@ export default function AIVisionChatPage() {
                 <Textarea
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
-                  placeholder="メッセージを入力..."
+                  placeholder="質問や詳細を入力（任意）..."
                   className="flex-grow resize-none"
                   rows={2}
                   onKeyDown={(e) => {
@@ -803,11 +824,7 @@ export default function AIVisionChatPage() {
                   }}
                 />
                 <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={handleSendMessage}
-                    disabled={!userInput.trim() || isLoading}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
+                  <Button onClick={handleSendMessage} disabled={isLoading} className="bg-blue-600 hover:bg-blue-700">
                     {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </Button>
                   <Button onClick={isListening ? () => {} : () => {}} variant="outline" disabled={!isStarted}>
@@ -839,26 +856,11 @@ export default function AIVisionChatPage() {
                 </div>
 
                 <div>
-                  <Label htmlFor="prompt">システムプロンプト</Label>
-                  <Select value={systemPrompt} onValueChange={setSystemPrompt}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {systemPrompts.map((prompt) => (
-                        <SelectItem key={prompt.id} value={prompt.id}>
-                          <div className="flex items-center gap-2">
-                            {prompt.name}
-                            {prompt.is_default && (
-                              <Badge variant="default" className="text-xs">
-                                デフォルト
-                              </Badge>
-                            )}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>知識ベース統計</Label>
+                  <div className="text-sm text-gray-600 mt-1">
+                    <p>登録文書数: {ragDocuments.length}件</p>
+                    <p>カテゴリ数: {[...new Set(ragDocuments.map((doc) => doc.category))].length}種類</p>
+                  </div>
                 </div>
               </div>
 
@@ -886,13 +888,26 @@ export default function AIVisionChatPage() {
                   {isSpeaking && <Volume2 className="w-4 h-4 text-blue-500" />}
                 </div>
               </div>
+
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  インテリジェント機能
+                </h4>
+                <ul className="text-sm text-green-700 space-y-1">
+                  <li>✅ 自動文書検索: 画像内容に基づいて関連文書を自動選択</li>
+                  <li>✅ コンテキスト抽出: デバイス種類、問題、緊急度を自動判定</li>
+                  <li>✅ 複合検索: ベクトル類似度 + キーワード + カテゴリ検索</li>
+                  <li>✅ 関連度スコア: 各文書の関連度を数値化して最適化</li>
+                </ul>
+              </div>
             </TabsContent>
 
             <TabsContent value="rag" className="space-y-4">
               <div className="border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <Plus className="w-5 h-5" />
-                  RAG文書管理 (Supabase)
+                  知識ベース文書管理
                 </h3>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -994,7 +1009,7 @@ export default function AIVisionChatPage() {
 
                 <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
                   {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  RAG文書を保存
+                  知識ベース文書を保存
                 </Button>
               </div>
 
@@ -1002,15 +1017,16 @@ export default function AIVisionChatPage() {
               <div className="border rounded-lg p-4">
                 <h4 className="font-semibold mb-3 flex items-center gap-2">
                   <Database className="w-4 h-4" />
-                  登録済みRAG文書 ({ragDocuments.length}件)
+                  登録済み知識ベース文書 ({ragDocuments.length}件)
                 </h4>
+                <p className="text-sm text-gray-600 mb-3">これらの文書は画像分析時に自動的に検索対象となります。</p>
                 <ScrollArea className="h-64">
                   <div className="space-y-2">
                     {ragDocuments.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <ImageIcon className="w-4 h-4" />
+                            <Search className="w-4 h-4 text-blue-500" />
                             <span className="font-medium">{doc.title}</span>
                             <Badge variant="outline">{doc.category}</Badge>
                           </div>
@@ -1026,17 +1042,6 @@ export default function AIVisionChatPage() {
                           )}
                         </div>
                         <div className="flex gap-2">
-                          <Button
-                            onClick={() => setSelectedRAGEntry(selectedRAGEntry === doc.id ? "none" : doc.id)}
-                            variant={selectedRAGEntry === doc.id ? "default" : "outline"}
-                            size="sm"
-                          >
-                            {selectedRAGEntry === doc.id ? (
-                              <CheckCircle className="w-4 h-4" />
-                            ) : (
-                              <Link className="w-4 h-4" />
-                            )}
-                          </Button>
                           <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
                             <Edit className="w-4 h-4" />
                           </Button>
@@ -1060,25 +1065,27 @@ export default function AIVisionChatPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Edit className="w-5 h-5" />
-              RAG文書を編集
+              知識ベース文書を編集
             </DialogTitle>
           </DialogHeader>
           {editingRAGEntry && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2">
                 <div>
-                  <Label htmlFor="edit-title">文書タイトル</Label>
+                  <Label htmlFor="edit-rag-title">文書タイトル</Label>
                   <Input
-                    id="edit-title"
+                    id="edit-rag-title"
                     value={editingRAGEntry.title}
-                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, title: e.target.value }))}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, title: e.target.value }) as any)}
+                    placeholder="例: 警告アイコン対応手順"
                   />
                 </div>
+
                 <div>
-                  <Label htmlFor="edit-category">カテゴリ</Label>
+                  <Label htmlFor="edit-rag-category">カテゴリ</Label>
                   <Select
                     value={editingRAGEntry.category}
-                    onValueChange={(value) => setEditingRAGEntry((prev) => ({ ...prev!, category: value }))}
+                    onValueChange={(value) => setEditingRAGEntry((prev) => ({ ...prev!, category: value }) as any)}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1094,47 +1101,56 @@ export default function AIVisionChatPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2">
                 <div>
-                  <Label htmlFor="edit-icon-name">アイコン名</Label>
+                  <Label htmlFor="edit-rag-icon-name">アイコン名</Label>
                   <Input
-                    id="edit-icon-name"
-                    value={editingRAGEntry.icon_name || ""}
-                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, icon_name: e.target.value }))}
+                    id="edit-rag-icon-name"
+                    value={editingRAGEntry.iconName || ""}
+                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, iconName: e.target.value }) as any)}
+                    placeholder="例: 警告ランプ"
                   />
                 </div>
+
                 <div>
-                  <Label htmlFor="edit-tags">タグ (カンマ区切り)</Label>
+                  <Label htmlFor="edit-rag-tags">タグ (カンマ区切り)</Label>
                   <Input
-                    id="edit-tags"
-                    value={(editingRAGEntry as any).tags}
-                    onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, tags: e.target.value }) as any)}
+                    id="edit-rag-tags"
+                    value={editingRAGEntry.tags.join(", ")}
+                    onChange={(e) =>
+                      setEditingRAGEntry(
+                        (prev) => ({ ...prev!, tags: e.target.value.split(", ").map((tag) => tag.trim()) }) as any,
+                      )
+                    }
+                    placeholder="例: 警告, ランプ, 赤色"
                   />
                 </div>
               </div>
 
-              <div>
-                <Label htmlFor="edit-icon-description">アイコン説明</Label>
+              <div className="mb-4">
+                <Label htmlFor="edit-rag-icon-description">アイコン説明</Label>
                 <Textarea
-                  id="edit-icon-description"
-                  value={editingRAGEntry.icon_description || ""}
-                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, icon_description: e.target.value }))}
+                  id="edit-rag-icon-description"
+                  value={editingRAGEntry.iconDescription || ""}
+                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, iconDescription: e.target.value }) as any)}
+                  placeholder="アイコンの詳細な説明を入力..."
                   rows={2}
                 />
               </div>
 
-              <div>
-                <Label htmlFor="edit-content">文書内容</Label>
+              <div className="mb-4">
+                <Label htmlFor="edit-rag-content">文書内容</Label>
                 <Textarea
-                  id="edit-content"
+                  id="edit-rag-content"
                   value={editingRAGEntry.content}
-                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, content: e.target.value }))}
+                  onChange={(e) => setEditingRAGEntry((prev) => ({ ...prev!, content: e.target.value }) as any)}
+                  placeholder="トラブルシューティング手順や解決方法を詳しく記述..."
                   rows={4}
                 />
               </div>
 
-              <div>
-                <Label htmlFor="edit-image">新しい画像 (任意)</Label>
+              <div className="mb-4">
+                <Label htmlFor="edit-rag-image">参考画像</Label>
                 <div className="flex items-center gap-2">
                   <Button
                     onClick={() => ragImageInputRef.current?.click()}
@@ -1144,35 +1160,25 @@ export default function AIVisionChatPage() {
                     <Upload className="w-4 h-4" />
                     画像を選択
                   </Button>
-                  {(editingRAGEntry as any).image && (
-                    <span className="text-sm text-gray-600">{(editingRAGEntry as any).image.name}</span>
-                  )}
+                  {editingRAGEntry.image && <span className="text-sm text-gray-600">{editingRAGEntry.image.name}</span>}
                 </div>
+                <input
+                  ref={ragImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  onChange={handleRAGImageUpload}
+                  className="hidden"
+                />
               </div>
 
-              <div className="flex gap-2 pt-4">
-                <Button onClick={saveRAGEntry} disabled={isLoading} className="flex-1">
-                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  更新
-                </Button>
-                <Button
-                  onClick={() => {
-                    setEditingRAGEntry(null)
-                    setIsEditDialogOpen(false)
-                  }}
-                  variant="outline"
-                >
-                  <X className="w-4 h-4 mr-2" />
-                  キャンセル
-                </Button>
-              </div>
+              <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
+                {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                知識ベース文書を保存
+              </Button>
             </div>
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Hidden canvas for image capture */}
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   )
 }

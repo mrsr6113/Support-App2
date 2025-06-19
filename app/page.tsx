@@ -75,6 +75,79 @@ interface SystemPrompt {
   is_default: boolean
 }
 
+// Simple speech recognition hook implementation
+const useSpeechRecognition = () => {
+  const [isListening, setIsListening] = useState(false)
+  const [transcript, setTranscript] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const recognitionRef = useRef<any>(null)
+
+  const isSupported =
+    typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)
+
+  const startListening = () => {
+    if (!isSupported) {
+      setError("音声認識はこのブラウザではサポートされていません")
+      return
+    }
+
+    try {
+      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
+      recognitionRef.current = new SpeechRecognition()
+
+      recognitionRef.current.continuous = false
+      recognitionRef.current.interimResults = true
+      recognitionRef.current.lang = "ja-JP"
+
+      recognitionRef.current.onstart = () => {
+        setIsListening(true)
+        setError(null)
+      }
+
+      recognitionRef.current.onresult = (event: any) => {
+        const current = event.resultIndex
+        const transcript = event.results[current][0].transcript
+        setTranscript(transcript)
+      }
+
+      recognitionRef.current.onerror = (event: any) => {
+        setError(`音声認識エラー: ${event.error}`)
+        setIsListening(false)
+      }
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false)
+      }
+
+      recognitionRef.current.start()
+    } catch (err) {
+      setError("音声認識の開始に失敗しました")
+      setIsListening(false)
+    }
+  }
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+    }
+    setIsListening(false)
+  }
+
+  const resetTranscript = () => {
+    setTranscript("")
+  }
+
+  return {
+    isListening,
+    transcript,
+    startListening,
+    stopListening,
+    resetTranscript,
+    isSupported,
+    error,
+  }
+}
+
 const CATEGORIES = [
   { value: "general", label: "一般" },
   { value: "coffee_maker", label: "コーヒーメーカー" },
@@ -96,6 +169,7 @@ export default function AIVisionChatPage() {
   const [userInput, setUserInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   // Media state
   const [inputMode, setInputMode] = useState<"camera" | "screen">("camera")
@@ -107,9 +181,16 @@ export default function AIVisionChatPage() {
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true)
   const [isAutoAnalysis, setIsAutoAnalysis] = useState(false)
 
-  // Voice state
-  const [isListening, setIsListening] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
+  // Voice state - replace existing voice state with this
+  const {
+    isListening,
+    transcript,
+    startListening,
+    stopListening,
+    resetTranscript,
+    isSupported: isSpeechSupported,
+    error: speechError,
+  } = useSpeechRecognition()
 
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
@@ -134,7 +215,6 @@ export default function AIVisionChatPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ragImageInputRef = useRef<HTMLInputElement>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
-  const recognitionRef = useRef<any>(null)
 
   // Mobile detection
   useEffect(() => {
@@ -156,6 +236,13 @@ export default function AIVisionChatPage() {
     loadRAGDocuments()
     loadSystemPrompts()
   }, [])
+
+  // Add this useEffect after the existing useEffects
+  useEffect(() => {
+    if (transcript && transcript.trim()) {
+      setUserInput(transcript.trim())
+    }
+  }, [transcript])
 
   const loadRAGDocuments = async () => {
     try {
@@ -445,17 +532,56 @@ ${result.relevantDocuments
     }
   }
 
-  // Send message function
-  const handleSendMessage = () => {
+  // Replace the handleSendMessage function with this enhanced version
+  const handleSendMessage = async () => {
     if (!userInput.trim() || isLoading) return
 
+    const messageText = userInput.trim()
+    setUserInput("")
+    resetTranscript()
+
     if (isStarted) {
+      // Image-based analysis with intelligent RAG
       handleIntelligentAnalyze()
     } else {
       // Text-only chat
-      addMessage("user", userInput.trim())
-      setUserInput("")
-      // Add AI response logic here if needed
+      addMessage("user", messageText, undefined, { textOnly: true })
+
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const response = await fetch("/api/text-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: messageText,
+            chatHistory: chatMessages
+              .filter((msg) => msg.type === "user" || msg.type === "ai")
+              .slice(-10)
+              .map((msg) => ({
+                role: msg.type === "user" ? "user" : "model",
+                content: msg.content,
+              })),
+          }),
+        })
+
+        const result = await response.json()
+
+        if (result.success) {
+          addMessage("ai", result.response, undefined, {
+            textOnly: true,
+            processingTime: result.processingTimeMs,
+          })
+        } else {
+          setError(result.error || "チャット処理に失敗しました。")
+        }
+      } catch (error) {
+        console.error("Text chat error:", error)
+        setError("チャット中にエラーが発生しました。")
+      } finally {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -745,10 +871,10 @@ ${result.relevantDocuments
               </div>
 
               {/* Error Display */}
-              {error && (
+              {(error || speechError) && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
+                  <AlertDescription>{error || speechError}</AlertDescription>
                 </Alert>
               )}
 
@@ -808,26 +934,52 @@ ${result.relevantDocuments
                 </div>
               </ScrollArea>
 
-              {/* Input Area */}
+              {/* Replace the input area with enhanced version */}
               <div className="flex gap-2">
-                <Textarea
-                  value={userInput}
-                  onChange={(e) => setUserInput(e.target.value)}
-                  placeholder="質問や詳細を入力（任意）..."
-                  className="flex-grow resize-none"
-                  rows={2}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSendMessage()
-                    }
-                  }}
-                />
+                <div className="flex-grow relative">
+                  <Textarea
+                    value={userInput}
+                    onChange={(e) => setUserInput(e.target.value)}
+                    placeholder={isListening ? "音声入力中..." : "メッセージを入力（任意）..."}
+                    className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
+                    rows={2}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault()
+                        handleSendMessage()
+                      }
+                    }}
+                  />
+                  {isListening && (
+                    <div className="absolute top-2 right-2">
+                      <div className="flex items-center gap-1 text-red-600 text-xs">
+                        <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
+                        録音中
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="flex flex-col gap-2">
-                  <Button onClick={handleSendMessage} disabled={isLoading} className="bg-blue-600 hover:bg-blue-700">
+                  <Button
+                    onClick={handleSendMessage}
+                    disabled={!userInput.trim() || isLoading}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
                     {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </Button>
-                  <Button onClick={isListening ? () => {} : () => {}} variant="outline" disabled={!isStarted}>
+                  <Button
+                    onClick={isListening ? stopListening : startListening}
+                    variant="outline"
+                    disabled={!isSpeechSupported}
+                    className={isListening ? "bg-red-100 border-red-300" : ""}
+                    title={
+                      !isSpeechSupported
+                        ? "音声認識はサポートされていません"
+                        : isListening
+                          ? "音声入力を停止"
+                          : "音声入力を開始"
+                    }
+                  >
                     {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                   </Button>
                 </div>

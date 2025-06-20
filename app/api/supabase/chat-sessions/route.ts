@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const { data: tableExists, error: tableError } = await supabaseAdmin.from("chat_sessions").select("id").limit(1)
 
     if (tableError && tableError.code === "42P01") {
-      // Table doesn't exist, return empty session
+      console.warn("Chat sessions table does not exist. Please run the database setup script.")
       return NextResponse.json({
         success: true,
         session: null,
@@ -57,13 +57,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Upsert the chat session
     const { data, error } = await supabaseAdmin
       .from("chat_sessions")
-      .upsert({
-        session_id: sessionId,
-        messages: messages || [],
-        updated_at: new Date().toISOString(),
-      })
+      .upsert(
+        {
+          session_id: sessionId,
+          messages: messages || [],
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "session_id",
+        },
+      )
       .select()
       .single()
 
@@ -74,7 +80,30 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, session: data })
   } catch (error) {
-    console.error("Chat session creation error:", error)
-    return NextResponse.json({ success: false, error: "Failed to create chat session" }, { status: 500 })
+    console.error("Chat session save error:", error)
+    return NextResponse.json({ success: false, error: "Failed to save chat session" }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const sessionId = searchParams.get("sessionId")
+
+    if (!sessionId) {
+      return NextResponse.json({ success: false, error: "Session ID is required" }, { status: 400 })
+    }
+
+    const { error } = await supabaseAdmin.from("chat_sessions").delete().eq("session_id", sessionId)
+
+    if (error) {
+      console.error("Supabase error:", error)
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Chat session deletion error:", error)
+    return NextResponse.json({ success: false, error: "Failed to delete chat session" }, { status: 500 })
   }
 }

@@ -181,6 +181,11 @@ export default function AIVisionChatPage() {
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true)
   const [isAutoAnalysis, setIsAutoAnalysis] = useState(false)
 
+  // Prompt selection state
+  const [selectedSystemPrompt, setSelectedSystemPrompt] = useState<string>("default")
+  const [selectedAnalysisPrompt, setSelectedAnalysisPrompt] = useState<string>("default")
+  const [visualAnalysisPrompts, setVisualAnalysisPrompts] = useState<any[]>([])
+
   // Voice state - replace existing voice state with this
   const {
     isListening,
@@ -235,6 +240,7 @@ export default function AIVisionChatPage() {
   useEffect(() => {
     loadRAGDocuments()
     loadSystemPrompts()
+    loadVisualAnalysisPrompts()
   }, [])
 
   // Add this useEffect after the existing useEffects
@@ -269,6 +275,20 @@ export default function AIVisionChatPage() {
       }
     } catch (error) {
       console.error("Failed to load system prompts:", error)
+    }
+  }
+
+  const loadVisualAnalysisPrompts = async () => {
+    try {
+      const response = await fetch("/api/supabase/visual-prompts")
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success) {
+          setVisualAnalysisPrompts(result.prompts || [])
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load visual analysis prompts:", error)
     }
   }
 
@@ -345,7 +365,9 @@ export default function AIVisionChatPage() {
     }
     setIsStarted(false)
     stopPeriodicAnalysis()
-    addMessage("system", "キャプチャを停止しました。")
+    setUserInput("")
+    setError(null)
+    addMessage("system", "🛑 キャプチャを停止しました。チャット履歴は保持されています。")
   }
 
   // Fixed Analysis functions
@@ -427,6 +449,33 @@ export default function AIVisionChatPage() {
   }
 
   // Message functions
+  const saveChatSession = async (sessionId: string, newMessage: ChatMessage) => {
+    try {
+      const updatedMessages = [...chatMessages, newMessage]
+
+      const response = await fetch("/api/supabase/chat-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          messages: updatedMessages.map((msg) => ({
+            role: msg.type === "user" ? "user" : msg.type === "ai" ? "model" : "system",
+            content: msg.content,
+            timestamp: msg.timestamp.toISOString(),
+            imageData: msg.imageData,
+            metadata: msg.metadata,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        console.error("Failed to save chat session")
+      }
+    } catch (error) {
+      console.error("Error saving chat session:", error)
+    }
+  }
+
   const addMessage = (
     type: "user" | "ai" | "system",
     content: string,
@@ -445,6 +494,12 @@ export default function AIVisionChatPage() {
     }
 
     setChatMessages((prev) => [...prev, message])
+
+    // Save to chat session if it's a user or AI message
+    if (type === "user" || type === "ai") {
+      const sessionId = `session_${Date.now()}`
+      saveChatSession(sessionId, message)
+    }
 
     if (type === "ai" && isVoiceEnabled) {
       speakText(content)
@@ -516,13 +571,29 @@ export default function AIVisionChatPage() {
 
       console.log("Sending request to intelligent RAG API...")
 
+      // Get selected system prompt
+      let systemPrompt = ""
+      if (selectedSystemPrompt && selectedSystemPrompt !== "default") {
+        const selectedPrompt = systemPrompts.find((p) => p.id === selectedSystemPrompt)
+        systemPrompt = selectedPrompt?.prompt || ""
+      }
+
+      // Get selected analysis prompt
+      let analysisPromptText = prompt
+      if (selectedAnalysisPrompt && selectedAnalysisPrompt !== "default") {
+        const selectedPrompt = visualAnalysisPrompts.find((p) => p.id === selectedAnalysisPrompt)
+        analysisPromptText = selectedPrompt?.prompt || prompt
+      }
+
+      // Update the API call to include the selected prompts
       const response = await fetch("/api/intelligent-rag/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageBase64: base64Image,
           mimeType: "image/jpeg",
-          userPrompt: prompt,
+          userPrompt: analysisPromptText,
+          systemPrompt: systemPrompt,
           chatHistory: chatMessages
             .filter((msg) => msg.type === "user" || msg.type === "ai")
             .slice(-10)
@@ -680,6 +751,7 @@ ${result.relevantDocuments
       let mimeType = null
 
       if (entry.image) {
+        addMessage("system", "📷 画像を処理中...")
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
           reader.onloadend = () => {
@@ -708,6 +780,8 @@ ${result.relevantDocuments
         imageBase64,
         mimeType,
       }
+
+      addMessage("system", `💾 RAG文書「${entry.title}」を${editingRAGEntry ? "更新" : "保存"}中...`)
 
       let response
       if (editingRAGEntry) {
@@ -751,13 +825,20 @@ ${result.relevantDocuments
         }
 
         if (ragImageInputRef.current) ragImageInputRef.current.value = ""
-        loadRAGDocuments()
+
+        // Reload documents to reflect changes
+        await loadRAGDocuments()
+
+        addMessage("system", "🔄 知識ベースを更新しました。")
       } else {
         setError(result.error || "RAG文書の保存に失敗しました。")
+        addMessage("system", `❌ エラー: ${result.error || "RAG文書の保存に失敗しました。"}`)
       }
     } catch (error) {
       console.error("RAG save error:", error)
-      setError("RAG文書の保存中にエラーが発生しました。")
+      const errorMsg = "RAG文書の保存中にエラーが発生しました。"
+      setError(errorMsg)
+      addMessage("system", `❌ ${errorMsg}`)
     } finally {
       setIsLoading(false)
     }
@@ -1051,6 +1132,42 @@ ${result.relevantDocuments
             <TabsContent value="settings" className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
+                  <Label htmlFor="system-prompt">システムプロンプト</Label>
+                  <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="システムプロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">デフォルト</SelectItem>
+                      {systemPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="analysis-prompt">分析プロンプト</Label>
+                  <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="分析プロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">デフォルト</SelectItem>
+                      {visualAnalysisPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
                   <Label htmlFor="frequency">分析頻度 (秒)</Label>
                   <Select
                     value={analysisFrequency.toString()}
@@ -1142,7 +1259,7 @@ ${result.relevantDocuments
                       onValueChange={(value) => setNewRAGEntry((prev) => ({ ...prev, category: value }))}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="カテゴリを選択" />
                       </SelectTrigger>
                       <SelectContent>
                         {CATEGORIES.map((category) => (
@@ -1302,7 +1419,7 @@ ${result.relevantDocuments
                     onValueChange={(value) => setEditingRAGEntry((prev) => ({ ...prev!, category: value }) as any)}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="カテゴリを選択" />
                     </SelectTrigger>
                     <SelectContent>
                       {CATEGORIES.map((category) => (

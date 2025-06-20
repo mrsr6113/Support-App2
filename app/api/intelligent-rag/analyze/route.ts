@@ -29,7 +29,7 @@ interface RAGDocument {
 
 export async function POST(request: NextRequest) {
   try {
-    const { imageBase64, mimeType, userPrompt, chatHistory = [], sessionId } = await request.json()
+    const { imageBase64, mimeType, userPrompt, systemPrompt, chatHistory = [], sessionId } = await request.json()
 
     if (!imageBase64) {
       return NextResponse.json(
@@ -224,8 +224,9 @@ ${userPrompt ? `ユーザーからの追加情報: ${userPrompt}` : ""}
     relevantDocuments = relevantDocuments.slice(0, 5) // Top 5 most relevant
 
     // Step 3: Generate response using context and relevant documents
-    let responsePrompt = `
-あなたは専門的なトラブルシューティングアシスタントです。
+    let responsePrompt = systemPrompt || `あなたは専門的なトラブルシューティングアシスタントです。`
+
+    responsePrompt += `
 
 画像分析結果：
 - デバイス: ${extractedContext.deviceType}
@@ -319,6 +320,35 @@ ${doc.icon_name ? `視覚的指標: ${doc.icon_name} - ${doc.icon_description}` 
     const response = finalResult.response.text()
 
     console.log(`[Intelligent RAG] Analysis completed in ${processingTime}ms`)
+
+    // Save chat session
+    try {
+      await supabase.from("chat_sessions").upsert({
+        session_id: sessionId,
+        messages: [
+          ...(chatHistory || []),
+          {
+            role: "user",
+            parts: [{ text: userPrompt }],
+            timestamp: new Date().toISOString(),
+            imageData: `data:${mimeType};base64,${imageBase64}`,
+          },
+          {
+            role: "model",
+            parts: [{ text: response }],
+            timestamp: new Date().toISOString(),
+            metadata: {
+              extractedContext,
+              relevantDocuments: relevantDocuments.length,
+              processingTime,
+            },
+          },
+        ],
+        updated_at: new Date().toISOString(),
+      })
+    } catch (sessionError) {
+      console.error("Failed to save chat session:", sessionError)
+    }
 
     return NextResponse.json({
       success: true,

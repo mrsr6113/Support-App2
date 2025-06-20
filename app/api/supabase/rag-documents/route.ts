@@ -150,42 +150,49 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Title and content are required" }, { status: 400 })
     }
 
-    // Update the document
-    const updateData: any = {
-      title,
-      content,
-      category: category || "general",
-      tags: Array.isArray(tags) ? tags : [],
-      icon_name: iconName,
-      icon_description: iconDescription,
-      updated_at: new Date().toISOString(),
+    // Check if the table exists first
+    const { data: tableExists, error: tableError } = await supabaseAdmin.from("rag_documents").select("id").limit(1)
+
+    if (tableError && tableError.code === "42P01") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database tables not initialized. Please run the setup script first.",
+        },
+        { status: 500 },
+      )
     }
 
-    // If new image is provided, generate new embedding
+    // If new image is provided, we need to update the embedding
     if (imageBase64 && mimeType) {
       try {
-        const embeddingResponse = await fetch("/api/generic-rag/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            entries: [
-              {
-                image: imageBase64,
-                mimeType,
-                iconName: iconName || title,
-                iconDescription: iconDescription || content,
-                content,
-                category: category || "general",
-                tags: Array.isArray(tags) ? tags : [],
-              },
-            ],
-          }),
-        })
+        // First, delete the old document
+        await supabaseAdmin.from("rag_documents").delete().eq("id", id)
+
+        // Then create a new one with updated embedding
+        const embeddingResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/generic-rag/register`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              entries: [
+                {
+                  image: imageBase64,
+                  mimeType,
+                  iconName: iconName || title,
+                  iconDescription: iconDescription || content,
+                  content,
+                  category: category || "general",
+                  tags: Array.isArray(tags) ? tags : [],
+                },
+              ],
+            }),
+          },
+        )
 
         const embeddingResult = await embeddingResponse.json()
         if (embeddingResult.success && embeddingResult.results?.[0]?.success) {
-          // Delete the old document and return the new one
-          await supabaseAdmin.from("rag_documents").delete().eq("id", id)
           return NextResponse.json({
             success: true,
             document: { id: embeddingResult.results[0].id },
@@ -194,18 +201,41 @@ export async function PUT(request: NextRequest) {
         }
       } catch (embeddingError) {
         console.error("Image embedding error:", embeddingError)
-        // Continue with text-only update
+        // Continue with text-only update if embedding fails
       }
+    }
+
+    // Standard update without new image
+    const updateData: any = {
+      title,
+      content,
+      category: category || "general",
+      tags: Array.isArray(tags) ? tags : [],
+      icon_name: iconName,
+      icon_description: iconDescription,
+      updated_at: new Date().toISOString(),
+      metadata: {
+        lastModified: new Date().toISOString(),
+        hasImage: !!imageBase64,
+      },
     }
 
     const { data, error } = await supabaseAdmin.from("rag_documents").update(updateData).eq("id", id).select().single()
 
     if (error) {
-      console.error("Supabase error:", error)
+      console.error("Supabase update error:", error)
       return NextResponse.json({ success: false, error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, document: data })
+    if (!data) {
+      return NextResponse.json({ success: false, error: "Document not found or update failed" }, { status: 404 })
+    }
+
+    return NextResponse.json({
+      success: true,
+      document: data,
+      message: "Document updated successfully",
+    })
   } catch (error) {
     console.error("RAG document update error:", error)
     return NextResponse.json({ success: false, error: "Failed to update RAG document" }, { status: 500 })

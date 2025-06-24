@@ -143,8 +143,8 @@ const useSpeechRecognition = () => {
     startListening,
     stopListening,
     resetTranscript,
-    isSupported,
-    error,
+    isSupported: isSpeechSupported,
+    error: speechError,
   }
 }
 
@@ -911,7 +911,7 @@ ${result.relevantDocuments
 
     if (isMobile) {
       // On mobile, make video area much larger when started
-      return "w-full h-[70vh] bg-black rounded-lg overflow-hidden transform scale-105 origin-center mb-4"
+      return "w-full h-[60vh] bg-black rounded-lg overflow-hidden mb-4"
     } else {
       // Desktop size
       return "w-full h-64 bg-black rounded-lg overflow-hidden"
@@ -919,53 +919,54 @@ ${result.relevantDocuments
   }
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto p-4">
+    <div className="flex flex-col h-screen max-w-4xl mx-auto p-2 sm:p-4">
       <Card className="flex-grow flex flex-col">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2">
-            <Brain className="w-6 h-6" />
+        <CardHeader className="border-b px-4 py-3 sm:px-6 sm:py-4">
+          <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <Brain className="w-5 h-5 sm:w-6 sm:h-6" />
             Intelligent AI Vision Chat
-            <Badge variant="default" className="ml-2">
+            <Badge variant="default" className="ml-2 text-xs">
               <Zap className="w-3 h-3 mr-1" />
               Auto RAG
             </Badge>
           </CardTitle>
         </CardHeader>
 
-        <CardContent className="flex-grow flex flex-col p-4">
+        <CardContent className="flex-grow flex flex-col p-0">
           <Tabs defaultValue="chat" className="flex-grow flex flex-col">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="chat">インテリジェントチャット</TabsTrigger>
-              <TabsTrigger value="settings">設定</TabsTrigger>
-              <TabsTrigger value="rag">知識ベース管理</TabsTrigger>
+            {/* --- 修正箇所：TabsList --- */}
+            <TabsList className="grid w-full grid-cols-3 text-xs sm:text-sm h-auto p-1">
+              <TabsTrigger value="chat" className="py-1.5 sm:py-2">インテリジェントチャット</TabsTrigger>
+              <TabsTrigger value="settings" className="py-1.5 sm:py-2">設定</TabsTrigger>
+              <TabsTrigger value="rag" className="py-1.5 sm:py-2">知識ベース管理</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="chat" className="flex-grow flex flex-col space-y-4">
-              {/* Input Mode Selection */}
-              <div className="flex items-center space-x-4">
+            <TabsContent value="chat" className="flex-grow flex flex-col space-y-4 p-2 sm:p-4">
+              {/* --- 修正箇所：コントロールセクション --- */}
+              <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4">
                 <RadioGroup
                   value={inputMode}
                   onValueChange={(value: "camera" | "screen") => setInputMode(value)}
-                  className="flex flex-row space-x-4"
+                  className="flex items-center space-x-4"
                   disabled={isStarted}
                 >
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="camera" id="camera" />
-                    <Label htmlFor="camera" className="flex items-center gap-2">
+                    <Label htmlFor="camera" className="flex items-center gap-2 cursor-pointer">
                       <Camera className="w-4 h-4" />
                       カメラ
                     </Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="screen" id="screen" />
-                    <Label htmlFor="screen" className="flex items-center gap-2">
+                    <Label htmlFor="screen" className="flex items-center gap-2 cursor-pointer">
                       <Monitor className="w-4 h-4" />
                       画面共有
                     </Label>
                   </div>
                 </RadioGroup>
 
-                <div className="flex gap-2 ml-auto">
+                <div className="flex gap-2">
                   {!isStarted ? (
                     <Button onClick={handleStart} className="bg-green-600 hover:bg-green-700">
                       <Play className="w-4 h-4 mr-2" />
@@ -980,40 +981,37 @@ ${result.relevantDocuments
                 </div>
               </div>
 
-              {/* Intelligent Analysis Info */}
               {isStarted && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs sm:text-sm">
                   <div className="flex items-center gap-2 text-blue-800">
                     <Target className="w-4 h-4" />
                     <span className="font-medium">インテリジェント分析モード</span>
                   </div>
-                  <p className="text-sm text-blue-700 mt-1">
-                    画像を分析すると、AIが自動的に関連する知識ベース文書（{ragDocuments.length}
-                    件）を検索して最適な回答を提供します。
+                  <p className="text-blue-700 mt-1">
+                    AIが自動的に関連文書（{ragDocuments.length}
+                    件）を検索して回答します。
                   </p>
                 </div>
               )}
 
-              {/* Video Area */}
               <div className={getVideoAreaClasses()}>
                 {isStarted ? (
                   <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
                 ) : (
-                  <div className="text-gray-500 text-center">
+                  <div className="text-gray-500 text-center p-4">
                     <div className="mb-2">
                       {inputMode === "camera" ? (
-                        <Camera className="w-12 h-12 mx-auto mb-2" />
+                        <Camera className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
                       ) : (
-                        <Monitor className="w-12 h-12 mx-auto mb-2" />
+                        <Monitor className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
                       )}
                     </div>
-                    <p>開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始</p>
-                    <p className="text-sm mt-2">AIが自動的に関連文書を検索します</p>
+                    <p className="font-medium">開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始</p>
+                    <p className="text-sm mt-1">AIが自動的に関連文書を検索します</p>
                   </div>
                 )}
               </div>
 
-              {/* Error Display */}
               {(error || speechError) && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
@@ -1021,8 +1019,7 @@ ${result.relevantDocuments
                 </Alert>
               )}
 
-              {/* Chat Messages */}
-              <ScrollArea className="flex-grow border rounded-lg p-4 min-h-[200px]">
+              <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-[150px]">
                 <div className="space-y-4">
                   {chatMessages.map((message) => (
                     <div
@@ -1030,7 +1027,7 @@ ${result.relevantDocuments
                       className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-lg p-3 ${
+                        className={`max-w-[85%] rounded-lg p-3 ${
                           message.type === "user"
                             ? "bg-blue-500 text-white"
                             : message.type === "ai"
@@ -1059,7 +1056,7 @@ ${result.relevantDocuments
                           <img
                             src={message.imageData || "/placeholder.svg"}
                             alt="Captured frame"
-                            className="w-full max-w-sm rounded mb-2"
+                            className="w-full max-w-xs rounded mb-2"
                           />
                         )}
                         <p className="text-sm whitespace-pre-wrap">{message.content}</p>
@@ -1077,7 +1074,6 @@ ${result.relevantDocuments
                 </div>
               </ScrollArea>
 
-              {/* Replace the input area with enhanced version */}
               <div className="flex gap-2">
                 <div className="flex-grow relative">
                   <Textarea
@@ -1106,7 +1102,7 @@ ${result.relevantDocuments
                   <Button
                     onClick={handleSendMessage}
                     disabled={!userInput.trim() || isLoading}
-                    className="bg-blue-600 hover:bg-blue-700"
+                    className="bg-blue-600 hover:bg-blue-700 h-full"
                   >
                     {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </Button>
@@ -1129,7 +1125,7 @@ ${result.relevantDocuments
               </div>
             </TabsContent>
 
-            <TabsContent value="settings" className="space-y-4">
+            <TabsContent value="settings" className="space-y-4 p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="system-prompt">システムプロンプト</Label>
@@ -1234,7 +1230,7 @@ ${result.relevantDocuments
               </div>
             </TabsContent>
 
-            <TabsContent value="rag" className="space-y-4">
+            <TabsContent value="rag" className="space-y-4 p-4">
               <div className="border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <Plus className="w-5 h-5" />

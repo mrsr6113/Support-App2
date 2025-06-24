@@ -143,8 +143,8 @@ const useSpeechRecognition = () => {
     startListening,
     stopListening,
     resetTranscript,
-    isSupported: isSpeechSupported,
-    error: speechError,
+    isSupported,
+    error,
   }
 }
 
@@ -936,9 +936,15 @@ ${result.relevantDocuments
           <Tabs defaultValue="chat" className="flex-grow flex flex-col">
             {/* --- 修正箇所：TabsList --- */}
             <TabsList className="grid w-full grid-cols-3 text-xs sm:text-sm h-auto p-1">
-              <TabsTrigger value="chat" className="py-1.5 sm:py-2">インテリジェントチャット</TabsTrigger>
-              <TabsTrigger value="settings" className="py-1.5 sm:py-2">設定</TabsTrigger>
-              <TabsTrigger value="rag" className="py-1.5 sm:py-2">知識ベース管理</TabsTrigger>
+              <TabsTrigger value="chat" className="py-1.5 sm:py-2">
+                インテリジェントチャット
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="py-1.5 sm:py-2">
+                設定
+              </TabsTrigger>
+              <TabsTrigger value="rag" className="py-1.5 sm:py-2">
+                知識ベース管理
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="chat" className="flex-grow flex flex-col space-y-4 p-2 sm:p-4">
@@ -1006,7 +1012,9 @@ ${result.relevantDocuments
                         <Monitor className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
                       )}
                     </div>
-                    <p className="font-medium">開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始</p>
+                    <p className="font-medium">
+                      開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始
+                    </p>
                     <p className="text-sm mt-1">AIが自動的に関連文書を検索します</p>
                   </div>
                 )}

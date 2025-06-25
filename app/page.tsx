@@ -1,4 +1,11 @@
-"use client"
+// 音声認識の型定義を追加
+declare global {
+  interface Window {
+    webkitSpeechRecognition: any
+    SpeechRecognition: any
+  }
+}
+;("use client")
 
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -34,27 +41,43 @@ export default function Home() {
 
   // 音声認識の設定
   useEffect(() => {
-    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-      const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = "ja-JP"
+    if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+      try {
+        const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = "ja-JP"
 
-      recognition.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((result) => result[0].transcript)
-          .join("")
-        setPrompt(transcript)
+        recognition.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((result: any) => result[0].transcript)
+            .join("")
+          setPrompt(transcript)
+        }
+
+        recognition.onerror = (event: any) => {
+          console.error("音声認識エラー:", event.error)
+          setIsListening(false)
+        }
+
+        if (isListening) {
+          recognition.start()
+        } else {
+          recognition.stop()
+        }
+
+        return () => {
+          try {
+            recognition.stop()
+          } catch (error) {
+            console.error("音声認識停止エラー:", error)
+          }
+        }
+      } catch (error) {
+        console.error("音声認識初期化エラー:", error)
+        setIsListening(false)
       }
-
-      if (isListening) {
-        recognition.start()
-      } else {
-        recognition.stop()
-      }
-
-      return () => recognition.stop()
     }
   }, [isListening])
 
@@ -103,7 +126,18 @@ export default function Home() {
       }, Number.parseInt(captureFrequency) * 1000)
     } catch (error) {
       console.error("メディアアクセスエラー:", error)
-      addMessage("カメラまたは画面共有へのアクセスに失敗しました。", "ai")
+      let errorMessage = "カメラまたは画面共有へのアクセスに失敗しました。"
+
+      if (error instanceof Error) {
+        if (error.name === "NotAllowedError") {
+          errorMessage = "カメラ/画面共有の許可が必要です。ブラウザの設定を確認してください。"
+        } else if (error.name === "NotFoundError") {
+          errorMessage = "カメラが見つかりません。デバイスを確認してください。"
+        }
+      }
+
+      addMessage(errorMessage, "ai")
+      setIsCapturing(false)
     }
   }
 
@@ -130,15 +164,15 @@ export default function Home() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // ビデオフレームをキャンバスに描画
-    canvas.width = videoRef.current.videoWidth
-    canvas.height = videoRef.current.videoHeight
-    ctx.drawImage(videoRef.current, 0, 0)
-
-    // Base64エンコード
-    const imageData = canvas.toDataURL("image/jpeg", 0.8)
-
     try {
+      // ビデオフレームをキャンバスに描画
+      canvas.width = videoRef.current.videoWidth
+      canvas.height = videoRef.current.videoHeight
+      ctx.drawImage(videoRef.current, 0, 0)
+
+      // Base64エンコード
+      const imageData = canvas.toDataURL("image/jpeg", 0.8)
+
       // Gemini APIで画像分析
       const response = await fetch("/api/analyze-image", {
         method: "POST",
@@ -151,13 +185,21 @@ export default function Home() {
         }),
       })
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
       const result = await response.json()
 
       if (result.success) {
         addMessage(result.analysis, "ai")
 
         // TTS APIで音声読み上げ
-        await speakText(result.analysis)
+        try {
+          await speakText(result.analysis)
+        } catch (ttsError) {
+          console.error("音声合成エラー:", ttsError)
+        }
       } else {
         addMessage("画像分析に失敗しました。", "ai")
       }
@@ -178,11 +220,27 @@ export default function Home() {
         body: JSON.stringify({ text }),
       })
 
-      if (response.ok) {
-        const audioBlob = await response.blob()
-        const audioUrl = URL.createObjectURL(audioBlob)
-        const audio = new Audio(audioUrl)
-        audio.play()
+      if (!response.ok) {
+        throw new Error(`TTS API error! status: ${response.status}`)
+      }
+
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+
+      audio.onloadeddata = () => {
+        audio.play().catch((error) => {
+          console.error("音声再生エラー:", error)
+        })
+      }
+
+      audio.onerror = (error) => {
+        console.error("音声ファイルエラー:", error)
+        URL.revokeObjectURL(audioUrl)
+      }
+
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl)
       }
     } catch (error) {
       console.error("音声合成エラー:", error)

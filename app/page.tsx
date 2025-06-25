@@ -25,6 +25,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isListening, setIsListening] = useState(false)
   const [stream, setStream] = useState<MediaStream | null>(null)
+  const [inputValue, setInputValue] = useState("") // Add input value state
+  const [isMobile, setIsMobile] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -55,6 +57,21 @@ export default function Home() {
       return () => recognition.stop()
     }
   }, [isListening])
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768) // Adjust breakpoint as needed
+    }
+
+    // Set initial value
+    handleResize()
+
+    // Add event listener
+    window.addEventListener("resize", handleResize)
+
+    // Clean up event listener
+    return () => window.removeEventListener("resize", handleResize)
+  }, [])
 
   // カメラ/画面共有の開始
   const startCapture = async () => {
@@ -185,12 +202,19 @@ export default function Home() {
 
   // 手動でメッセージ送信
   const sendMessage = () => {
-    if (prompt.trim()) {
-      addMessage(prompt, "user")
+    if (inputValue.trim()) {
+      addMessage(inputValue, "user")
+      setInputValue("") // Clear the input
       if (isCapturing) {
         captureAndAnalyze()
       }
     }
+  }
+
+  const getVideoAreaClasses = () => {
+    return isMobile
+      ? "w-full h-48 bg-gray-200 border-t border-b" // モバイル：高さを少し小さく、境界線追加
+      : "w-full h-64 bg-gray-200 border-t border-b" // PC：全幅、境界線追加
   }
 
   return (
@@ -286,49 +310,52 @@ export default function Home() {
 
           {/* メインコンテンツ */}
           <div className="lg:col-span-2 space-y-6">
-            {/* チャットメッセージエリア */}
-            <Card>
-              <CardHeader>
-                <CardTitle>チャット履歴</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-64">
-                  <div className="space-y-4">
-                    {messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
-                      >
-                        <div
-                          className={`max-w-[80%] p-3 rounded-lg ${
-                            message.sender === "user" ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-800"
-                          }`}
-                        >
-                          <p className="text-sm">{message.text}</p>
-                          <p className="text-xs opacity-70 mt-1">{message.timestamp.toLocaleTimeString()}</p>
-                        </div>
+            <Card className="h-full">
+              <CardContent className="h-full flex flex-col">
+                <main className="flex-1 flex flex-col">
+                  {/* 1. チャット表示エリア（上部） */}
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full p-4">
+                      <div className="space-y-4">
+                        {messages.map((message, index) => (
+                          <div key={index} className={message.sender === "user" ? "text-right" : "text-left"}>
+                            <span className="inline-block p-2 rounded-lg bg-blue-100">{message.text}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </ScrollArea>
                   </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
 
-            {/* 画像エリア（カメラ/画面共有） */}
-            <Card>
-              <CardHeader>
-                <CardTitle>{inputType === "camera" ? "カメラ映像" : "画面共有"}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="relative bg-gray-900 rounded-lg overflow-hidden">
-                  <video ref={videoRef} autoPlay muted className="w-full h-64 object-cover" />
-                  {!stream && (
-                    <div className="absolute inset-0 flex items-center justify-center text-white">
-                      <p>{inputType === "camera" ? "カメラ" : "画面共有"}を開始してください</p>
+                  {/* 2. 画像エリア（中央） */}
+                  <div className={getVideoAreaClasses()}>
+                    <p className="text-center">Camera View</p>
+                    <div className="relative bg-gray-900 rounded-lg overflow-hidden">
+                      <video ref={videoRef} autoPlay muted className="w-full h-full object-cover" />
+                      {!stream && (
+                        <div className="absolute inset-0 flex items-center justify-center text-white">
+                          <p>{inputType === "camera" ? "カメラ" : "画面共有"}を開始してください</p>
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <canvas ref={canvasRef} className="hidden" />
+                  </div>
+                </main>
+
+                {/* 3. メッセージ入力エリア（下部） */}
+                <div className="p-4 border-t bg-white">
+                  <div className="flex">
+                    <input
+                      type="text"
+                      className="flex-1 border rounded-l-md p-2"
+                      placeholder="Type your message..."
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                    />
+                    <button className="bg-blue-500 text-white rounded-r-md p-2 hover:bg-blue-700" onClick={sendMessage}>
+                      Send
+                    </button>
+                  </div>
                 </div>
-                <canvas ref={canvasRef} className="hidden" />
               </CardContent>
             </Card>
           </div>

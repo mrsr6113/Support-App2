@@ -84,16 +84,15 @@ const useSpeechRecognition = () => {
   const recognitionRef = useRef<any>(null)
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isStoppedRef = useRef(false)
+  const isManualStopRef = useRef(false)
 
   const isSupported =
     typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)
 
   const startListening = useCallback(
     (continuous = false) => {
-      if (!isSupported || isStoppedRef.current) {
-        if (!isSupported) {
-          setError("音声認識はこのブラウザではサポートされていません")
-        }
+      if (!isSupported) {
+        setError("音声認識はこのブラウザではサポートされていません")
         return
       }
 
@@ -118,6 +117,7 @@ const useSpeechRecognition = () => {
 
         setIsContinuous(continuous)
         isStoppedRef.current = false
+        isManualStopRef.current = false
 
         recognitionRef.current.onstart = () => {
           if (!isStoppedRef.current) {
@@ -137,15 +137,15 @@ const useSpeechRecognition = () => {
         recognitionRef.current.onerror = (event: any) => {
           console.error("Speech recognition error:", event.error)
 
-          if (isStoppedRef.current) return
+          if (isStoppedRef.current || isManualStopRef.current) return
 
           setError(`音声認識エラー: ${event.error}`)
           setIsListening(false)
 
           // Only restart if continuous mode and not a permission error
-          if (continuous && event.error !== "not-allowed" && !isStoppedRef.current) {
+          if (continuous && event.error !== "not-allowed" && !isStoppedRef.current && !isManualStopRef.current) {
             restartTimeoutRef.current = setTimeout(() => {
-              if (!isStoppedRef.current) {
+              if (!isStoppedRef.current && !isManualStopRef.current) {
                 startListening(true)
               }
             }, 2000)
@@ -153,14 +153,14 @@ const useSpeechRecognition = () => {
         }
 
         recognitionRef.current.onend = () => {
-          if (isStoppedRef.current) return
+          if (isStoppedRef.current || isManualStopRef.current) return
 
           setIsListening(false)
 
           // Auto-restart for continuous mode
-          if (continuous && !isStoppedRef.current) {
+          if (continuous && !isStoppedRef.current && !isManualStopRef.current) {
             restartTimeoutRef.current = setTimeout(() => {
-              if (!isStoppedRef.current) {
+              if (!isStoppedRef.current && !isManualStopRef.current) {
                 startListening(true)
               }
             }, 1000)
@@ -177,7 +177,10 @@ const useSpeechRecognition = () => {
     [isSupported],
   )
 
-  const stopListening = useCallback(() => {
+  const stopListening = useCallback((manual = false) => {
+    if (manual) {
+      isManualStopRef.current = true
+    }
     isStoppedRef.current = true
 
     if (restartTimeoutRef.current) {
@@ -416,11 +419,10 @@ export default function AIVisionChatPage() {
       setStream(mediaStream)
 
       // Auto-enable voice features on mobile with delay to prevent conflicts
-      if (isMobile && isSpeechSupported) {
-        setIsVoiceEnabled(true)
-        // Add delay to ensure camera is fully started - reset isStoppedRef for fresh start
+      if (isMobile && isSpeechSupported && isVoiceEnabled) {
+        // Add delay to ensure camera is fully started
         setTimeout(() => {
-          // Reset the stopped flag to allow fresh voice recognition start
+          // Reset manual stop flag for fresh start
           if (startListening) {
             startListening(true)
           }

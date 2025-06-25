@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -75,7 +75,7 @@ interface SystemPrompt {
   is_default: boolean
 }
 
-// Enhanced speech recognition hook with improved mobile handling
+// Enhanced speech recognition hook with voice commands
 const useSpeechRecognition = () => {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState("")
@@ -83,128 +83,83 @@ const useSpeechRecognition = () => {
   const [isContinuous, setIsContinuous] = useState(false)
   const recognitionRef = useRef<any>(null)
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const isStoppedRef = useRef(false)
 
   const isSupported =
     typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)
 
-  const startListening = useCallback(
-    (continuous = false) => {
-      if (!isSupported || isStoppedRef.current) {
-        if (!isSupported) {
-          setError("音声認識はこのブラウザではサポートされていません")
-        }
-        return
-      }
-
-      try {
-        // Clear any existing timeouts
-        if (restartTimeoutRef.current) {
-          clearTimeout(restartTimeoutRef.current)
-          restartTimeoutRef.current = null
-        }
-
-        const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
-
-        // Stop existing recognition if any
-        if (recognitionRef.current) {
-          recognitionRef.current.stop()
-        }
-
-        recognitionRef.current = new SpeechRecognition()
-        recognitionRef.current.continuous = continuous
-        recognitionRef.current.interimResults = true
-        recognitionRef.current.lang = "ja-JP"
-
-        setIsContinuous(continuous)
-        isStoppedRef.current = false
-
-        recognitionRef.current.onstart = () => {
-          if (!isStoppedRef.current) {
-            setIsListening(true)
-            setError(null)
-          }
-        }
-
-        recognitionRef.current.onresult = (event: any) => {
-          if (isStoppedRef.current) return
-
-          const current = event.resultIndex
-          const transcript = event.results[current][0].transcript
-          setTranscript(transcript)
-        }
-
-        recognitionRef.current.onerror = (event: any) => {
-          console.error("Speech recognition error:", event.error)
-
-          if (isStoppedRef.current) return
-
-          setError(`音声認識エラー: ${event.error}`)
-          setIsListening(false)
-
-          // Only restart if continuous mode and not a permission error
-          if (continuous && event.error !== "not-allowed" && !isStoppedRef.current) {
-            restartTimeoutRef.current = setTimeout(() => {
-              if (!isStoppedRef.current) {
-                startListening(true)
-              }
-            }, 2000)
-          }
-        }
-
-        recognitionRef.current.onend = () => {
-          if (isStoppedRef.current) return
-
-          setIsListening(false)
-
-          // Auto-restart for continuous mode
-          if (continuous && !isStoppedRef.current) {
-            restartTimeoutRef.current = setTimeout(() => {
-              if (!isStoppedRef.current) {
-                startListening(true)
-              }
-            }, 1000)
-          }
-        }
-
-        recognitionRef.current.start()
-      } catch (err) {
-        console.error("Speech recognition start error:", err)
-        setError("音声認識の開始に失敗しました")
-        setIsListening(false)
-      }
-    },
-    [isSupported],
-  )
-
-  const stopListening = useCallback(() => {
-    isStoppedRef.current = true
-
-    if (restartTimeoutRef.current) {
-      clearTimeout(restartTimeoutRef.current)
-      restartTimeoutRef.current = null
+  const startListening = (continuous = false) => {
+    if (!isSupported) {
+      setError("音声認識はこのブラウザではサポートされていません")
+      return
     }
 
+    try {
+      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
+      recognitionRef.current = new SpeechRecognition()
+
+      recognitionRef.current.continuous = continuous
+      recognitionRef.current.interimResults = true
+      recognitionRef.current.lang = "ja-JP"
+
+      setIsContinuous(continuous)
+
+      recognitionRef.current.onstart = () => {
+        setIsListening(true)
+        setError(null)
+      }
+
+      recognitionRef.current.onresult = (event: any) => {
+        const current = event.resultIndex
+        const transcript = event.results[current][0].transcript
+        setTranscript(transcript)
+      }
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error)
+        setError(`音声認識エラー: ${event.error}`)
+        setIsListening(false)
+
+        // 継続モードの場合、エラー後に再開を試行
+        if (continuous && event.error !== "not-allowed") {
+          restartTimeoutRef.current = setTimeout(() => {
+            startListening(true)
+          }, 2000)
+        }
+      }
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false)
+
+        // 継続モードの場合、自動的に再開
+        if (continuous) {
+          restartTimeoutRef.current = setTimeout(() => {
+            startListening(true)
+          }, 1000)
+        }
+      }
+
+      recognitionRef.current.start()
+    } catch (err) {
+      console.error("Speech recognition start error:", err)
+      setError("音声認識の開始に失敗しました")
+      setIsListening(false)
+    }
+  }
+
+  const stopListening = () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop()
-      recognitionRef.current = null
     }
-
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current)
+    }
     setIsListening(false)
     setIsContinuous(false)
-    setError(null)
-  }, [])
+  }
 
-  const resetTranscript = useCallback(() => {
+  const resetTranscript = () => {
     setTranscript("")
-  }, [])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopListening()
-    }
-  }, [stopListening])
+  }
 
   return {
     isListening,
@@ -350,7 +305,7 @@ export default function AIVisionChatPage() {
       // Regular input
       setUserInput(transcript.trim())
     }
-  }, [transcript, isStarted])
+  }, [transcript])
 
   const loadRAGDocuments = async () => {
     try {
@@ -394,7 +349,7 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Camera functions with improved mobile handling
+  // Camera functions
   const startCamera = async () => {
     try {
       const constraints = {
@@ -415,16 +370,12 @@ export default function AIVisionChatPage() {
 
       setStream(mediaStream)
 
-      // Auto-enable voice features on mobile with delay to prevent conflicts
-      if (isMobile && isSpeechSupported) {
+      // Auto-enable voice features on mobile
+      if (isMobile) {
         setIsVoiceEnabled(true)
-        // Add delay to ensure camera is fully started - reset isStoppedRef for fresh start
-        setTimeout(() => {
-          // Reset the stopped flag to allow fresh voice recognition start
-          if (startListening) {
-            startListening(true)
-          }
-        }, 1500)
+        if (isSpeechSupported) {
+          startListening(true) // Start continuous listening on mobile
+        }
       }
 
       if (isAutoAnalysis) {
@@ -464,43 +415,22 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Enhanced stop capture with proper cleanup
-  const stopCapture = useCallback(() => {
-    console.log("Stopping capture...")
-
-    // Stop all media tracks
+  const stopCapture = () => {
     if (stream) {
-      stream.getTracks().forEach((track) => {
-        track.stop()
-        console.log("Stopped track:", track.kind)
-      })
+      stream.getTracks().forEach((track) => track.stop())
       setStream(null)
     }
-
-    // Stop periodic analysis
+    setIsStarted(false)
     stopPeriodicAnalysis()
 
-    // Force stop voice recognition and TTS
-    if (isListening || isContinuous) {
-      console.log("Stopping voice recognition...")
+    // Stop continuous listening when camera stops
+    if (isContinuous) {
       stopListening()
     }
 
-    // Stop TTS if speaking
-    if (isSpeaking) {
-      console.log("Stopping TTS...")
-      setIsSpeaking(false)
-    }
-
-    // Reset states with small delay to prevent flickering
-    setTimeout(() => {
-      setIsStarted(false)
-      setUserInput("")
-      setError(null)
-    }, 100)
-
-    console.log("Capture stopped successfully")
-  }, [stream, isListening, isContinuous, isSpeaking, stopListening])
+    setUserInput("")
+    setError(null)
+  }
 
   // Analysis functions
   const captureFrame = (): string | null => {
@@ -542,7 +472,6 @@ export default function AIVisionChatPage() {
         return null
       }
 
-      console.log("Image captured successfully for search")
       return dataURL
     } catch (error) {
       console.error("Error capturing frame:", error)
@@ -554,7 +483,7 @@ export default function AIVisionChatPage() {
     if (intervalRef.current) clearInterval(intervalRef.current)
 
     intervalRef.current = setInterval(() => {
-      if (!isLoading && isStarted) {
+      if (!isLoading) {
         handleIntelligentAnalyze(true)
       }
     }, analysisFrequency * 1000)
@@ -620,13 +549,13 @@ export default function AIVisionChatPage() {
       saveChatSession(sessionId, message)
     }
 
-    if (type === "ai" && isVoiceEnabled && isStarted) {
+    if (type === "ai" && isVoiceEnabled) {
       speakText(content)
     }
   }
 
   const speakText = async (text: string) => {
-    if (!isVoiceEnabled || isSpeaking || !isStarted) return
+    if (!isVoiceEnabled || isSpeaking) return
 
     try {
       setIsSpeaking(true)
@@ -659,8 +588,6 @@ export default function AIVisionChatPage() {
         console.log("TTS playback started")
       } else {
         console.error("TTS API error:", response.status, response.statusText)
-        const errorText = await response.text()
-        console.error("TTS API error details:", errorText)
         setIsSpeaking(false)
       }
     } catch (error) {
@@ -669,17 +596,14 @@ export default function AIVisionChatPage() {
     }
   }
 
-  // Enhanced Intelligent Analysis function with improved image search
+  // Enhanced Intelligent Analysis function
   const handleIntelligentAnalyze = async (isAutomatic = false) => {
-    console.log("Starting intelligent image analysis and search...")
-
     const imageData = captureFrame()
     if (!imageData) {
       const errorMsg = "画像をキャプチャできませんでした。"
       if (!isAutomatic) {
         setError(errorMsg)
       }
-      console.error("Failed to capture image for analysis")
       return
     }
 
@@ -709,8 +633,6 @@ export default function AIVisionChatPage() {
         analysisPromptText = selectedPrompt?.prompt || prompt
       }
 
-      console.log("Sending image to intelligent RAG API for analysis and search...")
-
       const response = await fetch("/api/intelligent-rag/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -731,11 +653,6 @@ export default function AIVisionChatPage() {
       })
 
       const result = await response.json()
-      console.log("Received intelligent analysis result:", {
-        success: result.success,
-        relevantDocuments: result.relevantDocuments?.length || 0,
-        processingTime: result.processingTimeMs,
-      })
 
       if (result.success) {
         addMessage("ai", result.response, undefined, {
@@ -744,21 +661,15 @@ export default function AIVisionChatPage() {
           processingTime: result.processingTimeMs,
           intelligentAnalysis: true,
         })
-
-        console.log("Image search completed successfully:", {
-          documentsFound: result.relevantDocuments?.length || 0,
-          categories: result.extractedContext?.primaryCategory || "unknown",
-        })
       } else {
         if (!isAutomatic) {
-          setError(result.error || "画像分析・検索に失敗しました。")
-          console.error("Image analysis/search failed:", result.error)
+          setError(result.error || "分析に失敗しました。")
         }
       }
     } catch (error) {
       if (!isAutomatic) {
         console.error("Intelligent analysis error:", error)
-        const errorMsg = "画像分析・検索中にエラーが発生しました。"
+        const errorMsg = "インテリジェント分析中にエラーが発生しました。"
         setError(errorMsg)
       }
     } finally {
@@ -774,10 +685,8 @@ export default function AIVisionChatPage() {
     resetTranscript()
 
     if (isStarted) {
-      // Image-based analysis with search
       handleIntelligentAnalyze()
     } else {
-      // Text-only chat
       addMessage("user", messageText, undefined, { textOnly: true })
 
       setIsLoading(true)
@@ -966,7 +875,6 @@ export default function AIVisionChatPage() {
 
   // Main control functions
   const handleStart = async () => {
-    console.log("Starting camera/screen share...")
     setIsStarted(true)
 
     if (inputMode === "camera") {
@@ -977,24 +885,22 @@ export default function AIVisionChatPage() {
   }
 
   const handleStop = () => {
-    console.log("Stop button pressed")
     stopCapture()
     // Don't clear chat messages - keep them persistent
     setUserInput("")
     setError(null)
   }
 
-  // Calculate video area size - Fixed for PC/Mobile differentiation
+  // Calculate video area size
   const getVideoAreaClasses = () => {
     if (!isStarted) {
       return "w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center"
     }
-    // isMobileフラグでPCとスマホの表示サイズを切り替え
+
     if (isMobile) {
-      // スマホではh-[40vh] (現状の約2/3)
+      // Reduced height for mobile (2/3 of original)
       return "w-full h-[40vh] bg-black rounded-lg overflow-hidden"
     } else {
-      // PCでは以前のサイズh-64に戻す
       return "w-full h-64 bg-black rounded-lg overflow-hidden"
     }
   }
@@ -1124,13 +1030,12 @@ export default function AIVisionChatPage() {
                       <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                         <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
                           <CheckCircle className="w-4 h-4" />
-                          音声コマンド & 画像検索
+                          音声コマンド
                         </h4>
                         <ul className="text-sm text-green-700 space-y-1">
                           <li>• 「送信」: メッセージを送信</li>
                           <li>• 「カメラ起動」: カメラを開始</li>
-                          <li>• 画像検索: 自動的に関連文書を検索</li>
-                          <li>• モバイル: 継続的な音声認識</li>
+                          <li>• モバイルでは継続的な音声認識</li>
                         </ul>
                       </div>
                     </div>
@@ -1259,10 +1164,10 @@ export default function AIVisionChatPage() {
           </CardTitle>
         </CardHeader>
 
-        {/* Main Content - Fixed Layout with Mobile-specific structure */}
+        {/* Main Content - Fixed Layout */}
         <CardContent className="flex-grow flex flex-col p-0 overflow-hidden">
           <div className="flex-grow flex flex-col p-2 sm:p-4 space-y-4 overflow-hidden">
-            {/* Controls - Fixed at top */}
+            {/* Controls */}
             <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 flex-shrink-0">
               <RadioGroup
                 value={inputMode}
@@ -1301,15 +1206,7 @@ export default function AIVisionChatPage() {
               </div>
             </div>
 
-            {/* Error Display - Fixed position */}
-            {(error || speechError) && (
-              <Alert variant="destructive" className="flex-shrink-0">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error || speechError}</AlertDescription>
-              </Alert>
-            )}
-
-            {/* Video Area - Fixed with proper desktop/mobile sizing */}
+            {/* Video Area - Fixed */}
             <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
               {isStarted ? (
                 <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
@@ -1330,7 +1227,15 @@ export default function AIVisionChatPage() {
               )}
             </div>
 
-            {/* Chat Messages - Scrollable area that fills remaining space */}
+            {/* Error Display */}
+            {(error || speechError) && (
+              <Alert variant="destructive" className="flex-shrink-0">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error || speechError}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Chat Messages - Scrollable */}
             <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-0">
               <div className="space-y-4">
                 {chatMessages
@@ -1367,18 +1272,13 @@ export default function AIVisionChatPage() {
                         {message.metadata?.processingTime && (
                           <div className="text-xs opacity-70 mt-1">処理時間: {message.metadata.processingTime}ms</div>
                         )}
-                        {message.metadata?.relevantDocuments && message.metadata.relevantDocuments.length > 0 && (
-                          <div className="text-xs opacity-70 mt-1">
-                            検索結果: {message.metadata.relevantDocuments.length}件の関連文書
-                          </div>
-                        )}
                       </div>
                     </div>
                   ))}
               </div>
             </ScrollArea>
 
-            {/* Input Area - Fixed at bottom */}
+            {/* Input Area - Fixed */}
             <div className="flex gap-2 flex-shrink-0">
               <div className="flex-grow relative">
                 <Textarea

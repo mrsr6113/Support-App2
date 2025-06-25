@@ -128,26 +128,41 @@ ${userPrompt ? `ユーザーからの追加情報: ${userPrompt}` : ""}
       }
     }
 
-    // Step 2: Search for relevant RAG documents
+    // Step 2: Hybrid Search for relevant RAG documents
     const searchKeywords = [
       ...extractedContext.keywords,
       ...extractedContext.detectedIssues,
       ...extractedContext.visualIndicators,
       extractedContext.deviceType,
       extractedContext.problemType,
-    ].filter(Boolean)
+    ]
+      .filter(Boolean)
+      .join(" ") // キーワードをスペース区切りのテキストに変換
 
     let relevantDocuments: RAGDocument[] = []
 
-    console.log(`[Document Search] Searching with keywords: ${searchKeywords.join(", ")}`)
+    console.log(`[Hybrid Search] Searching with text: "${searchKeywords}"`)
 
-    if (searchKeywords.length > 0) {
-      // Try vector similarity search first
+    // 画像からベクトルを生成
+    const imageEmbedding = await generateImageEmbedding(imageBase64, mimeType)
+
+    if (imageEmbedding && imageEmbedding.length > 0) {
       try {
-        const embedding = await generateTextEmbedding(searchKeywords.join(" "))
-        if (embedding.length > 0) {
+        // 新しく作成したハイブリッド検索関数を呼び出す
+        const { data: hybridResults, error: hybridError } = await supabase.rpc("search_hybrid_documents", {
+          query_embedding: imageEmbedding,
+          query_text: searchKeywords,
+          match_threshold: 0.3, // 閾値は調整の余地あり
+          match_count: 5,
+          vector_weight: 0.6, // 重み付けも調整可能
+          text_weight: 0.4,
+        })
+
+        if (hybridError) {
+          console.error("Hybrid search error:", hybridError)
+          // フォールバック: ベクトル検索のみ
           const { data: vectorResults, error: vectorError } = await supabase.rpc("search_similar_documents", {
-            query_embedding: embedding,
+            query_embedding: imageEmbedding,
             match_threshold: 0.3,
             match_count: 5,
             filter_category: extractedContext.primaryCategory !== "general" ? extractedContext.primaryCategory : null,
@@ -158,64 +173,69 @@ ${userPrompt ? `ユーザーからの追加情報: ${userPrompt}` : ""}
               ...doc,
               relevance_score: doc.similarity || 0.5,
             }))
-            console.log(`[Vector Search] Found ${relevantDocuments.length} documents`)
+            console.log(`[Vector Search Fallback] Found ${relevantDocuments.length} documents`)
           }
+        } else if (hybridResults && hybridResults.length > 0) {
+          relevantDocuments = hybridResults.map((doc: any) => ({
+            ...doc,
+            relevance_score: doc.combined_score, // 統合されたスコアを使用
+          }))
+          console.log(`[Hybrid Search] Found ${relevantDocuments.length} documents with combined scores`)
         }
-      } catch (vectorSearchError) {
-        console.error("Vector search error:", vectorSearchError)
+      } catch (searchError) {
+        console.error("Search error:", searchError)
       }
+    }
 
-      // Fallback: Text-based search
-      if (relevantDocuments.length === 0) {
-        try {
-          const { data: textResults, error: textError } = await supabase
-            .from("rag_documents")
-            .select("*")
-            .or(
-              searchKeywords
-                .slice(0, 5) // Limit to first 5 keywords to avoid query complexity
-                .map((keyword) => `title.ilike.%${keyword}%,content.ilike.%${keyword}%`)
-                .join(","),
-            )
-            .eq("is_active", true)
-            .limit(5)
+    // Fallback: Text-based search if no results from hybrid search
+    if (relevantDocuments.length === 0 && searchKeywords.trim()) {
+      try {
+        const searchTerms = searchKeywords
+          .split(" ")
+          .filter((term) => term.length > 1)
+          .slice(0, 5)
+        const { data: textResults, error: textError } = await supabase
+          .from("rag_documents")
+          .select("*")
+          .or(searchTerms.map((keyword) => `title.ilike.%${keyword}%,content.ilike.%${keyword}%`).join(","))
+          .eq("is_active", true)
+          .limit(5)
 
-          if (!textError && textResults && textResults.length > 0) {
-            relevantDocuments = textResults.map((doc) => ({
-              ...doc,
-              relevance_score: 0.4, // Default relevance for text search
-            }))
-            console.log(`[Text Search] Found ${relevantDocuments.length} documents`)
-          }
-        } catch (textSearchError) {
-          console.error("Text search error:", textSearchError)
+        if (!textError && textResults && textResults.length > 0) {
+          relevantDocuments = textResults.map((doc) => ({
+            ...doc,
+            relevance_score: 0.4, // Default relevance for text search
+          }))
+          console.log(`[Text Search Fallback] Found ${relevantDocuments.length} documents`)
         }
+      } catch (textSearchError) {
+        console.error("Text search fallback error:", textSearchError)
       }
+    }
 
-      // Additional category-based search
-      if (relevantDocuments.length < 3 && extractedContext.primaryCategory !== "general") {
-        try {
-          const { data: categoryResults, error: categoryError } = await supabase
-            .from("rag_documents")
-            .select("*")
-            .eq("category", extractedContext.primaryCategory)
-            .eq("is_active", true)
-            .limit(3)
+    // Additional category-based search if still insufficient results
+    if (relevantDocuments.length < 3 && extractedContext.primaryCategory !== "general") {
+      try {
+        const { data: categoryResults, error: categoryError } = await supabase
+          .from("rag_documents")
+          .select("*")
+          .eq("category", extractedContext.primaryCategory)
+          .eq("is_active", true)
+          .limit(3)
 
-          if (!categoryError && categoryResults) {
-            for (const doc of categoryResults) {
-              if (!relevantDocuments.find((existing) => existing.id === doc.id)) {
-                relevantDocuments.push({
-                  ...doc,
-                  relevance_score: 0.3, // Lower relevance for category-only match
-                })
-              }
+        if (!categoryError && categoryResults) {
+          for (const doc of categoryResults) {
+            if (!relevantDocuments.find((existing) => existing.id === doc.id)) {
+              relevantDocuments.push({
+                ...doc,
+                relevance_score: 0.3, // Lower relevance for category-only match
+              })
             }
-            console.log(`[Category Search] Added ${categoryResults.length} additional documents`)
           }
-        } catch (categorySearchError) {
-          console.error("Category search error:", categorySearchError)
+          console.log(`[Category Search] Added ${categoryResults.length} additional documents`)
         }
+      } catch (categorySearchError) {
+        console.error("Category search error:", categorySearchError)
       }
     }
 
@@ -341,6 +361,7 @@ ${doc.icon_name ? `視覚的指標: ${doc.icon_name} - ${doc.icon_description}` 
               extractedContext,
               relevantDocuments: relevantDocuments.length,
               processingTime,
+              searchMethod: "hybrid",
             },
           },
         ],
@@ -368,6 +389,8 @@ ${doc.icon_name ? `視覚的指標: ${doc.icon_name} - ${doc.icon_description}` 
         documentsFound: relevantDocuments.length,
         sessionId,
         timestamp: new Date().toISOString(),
+        searchMethod: "hybrid",
+        searchKeywords,
       },
     })
   } catch (error) {
@@ -397,13 +420,54 @@ ${doc.icon_name ? `視覚的指標: ${doc.icon_name} - ${doc.icon_description}` 
   }
 }
 
+async function generateImageEmbedding(imageBase64: string, mimeType: string): Promise<number[]> {
+  try {
+    const model = genAI.getGenerativeModel({ model: "text-embedding-004" })
+
+    // 画像から特徴を抽出するためのプロンプト
+    const imageAnalysisPrompt = `
+この画像の視覚的特徴を詳細に分析し、以下の要素を含む説明文を生成してください：
+- 表示されているアイコンやランプの種類と状態
+- 色彩情報（赤、緑、青、オレンジなどの色）
+- 形状や配置
+- テキストや数字
+- デバイスの種類や部品
+- 問題や異常の兆候
+
+この説明文は検索用のベクトル生成に使用されます。
+`
+
+    // まず画像を分析してテキスト記述を生成
+    const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
+    const analysisResult = await visionModel.generateContent([
+      { text: imageAnalysisPrompt },
+      {
+        inlineData: {
+          data: imageBase64,
+          mimeType: mimeType || "image/jpeg",
+        },
+      },
+    ])
+
+    const imageDescription = analysisResult.response.text()
+    console.log(`[Image Embedding] Generated description: ${imageDescription.substring(0, 200)}...`)
+
+    // 生成された説明文からベクトルを作成
+    const result = await model.embedContent(imageDescription)
+    return result.embedding.values || []
+  } catch (error) {
+    console.error("Image embedding generation error:", error)
+    return []
+  }
+}
+
 async function generateTextEmbedding(text: string): Promise<number[]> {
   try {
     const model = genAI.getGenerativeModel({ model: "text-embedding-004" })
     const result = await model.embedContent(text)
     return result.embedding.values || []
   } catch (error) {
-    console.error("Embedding generation error:", error)
+    console.error("Text embedding generation error:", error)
     return []
   }
 }

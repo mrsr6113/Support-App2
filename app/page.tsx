@@ -418,15 +418,20 @@ export default function AIVisionChatPage() {
 
       setStream(mediaStream)
 
-      // Auto-enable voice features on mobile with delay to prevent conflicts
+      // Auto-enable voice features on mobile with improved handling
       if (isMobile && isSpeechSupported && isVoiceEnabled) {
-        // Add delay to ensure camera is fully started
+        // Stop any existing recognition first
+        if (isListening) {
+          stopListening(false) // Don't mark as manual stop
+        }
+
+        // Add delay to ensure camera is fully started and previous recognition is stopped
         setTimeout(() => {
-          // Reset manual stop flag for fresh start
-          if (startListening) {
+          if (!isListening) {
+            // Only start if not already listening
             startListening(true)
           }
-        }, 1500)
+        }, 2000)
       }
 
       if (isAutoAnalysis) {
@@ -482,10 +487,10 @@ export default function AIVisionChatPage() {
     // Stop periodic analysis
     stopPeriodicAnalysis()
 
-    // Force stop voice recognition and TTS
+    // Force stop voice recognition with manual flag
     if (isListening || isContinuous) {
       console.log("Stopping voice recognition...")
-      stopListening()
+      stopListening(true) // Mark as manual stop to prevent auto-restart
     }
 
     // Stop TTS if speaking
@@ -1311,131 +1316,281 @@ export default function AIVisionChatPage() {
               </Alert>
             )}
 
-            {/* Video Area - Fixed with proper desktop/mobile sizing */}
-            <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
-              {isStarted ? (
-                <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
-              ) : (
-                <div className="text-gray-500 text-center p-4">
-                  <div className="mb-2">
-                    {inputMode === "camera" ? (
-                      <Camera className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
-                    ) : (
-                      <Monitor className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
+            {/* Mobile Layout: Input Area first, then Video, then Chat */}
+            {isMobile ? (
+              <>
+                {/* Input Area - Mobile: at top */}
+                <div className="flex gap-2 flex-shrink-0">
+                  <div className="flex-grow relative">
+                    <Textarea
+                      value={userInput}
+                      onChange={(e) => setUserInput(e.target.value)}
+                      placeholder={
+                        isListening
+                          ? "音声入力中..."
+                          : isContinuous
+                            ? "音声コマンド待機中（「送信」「カメラ起動」など）..."
+                            : "メッセージを入力（任意）..."
+                      }
+                      className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
+                      rows={2}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                    />
+                    {isListening && (
+                      <div className="absolute top-2 right-2">
+                        <div className="flex items-center gap-1 text-red-600 text-xs">
+                          <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
+                          {isContinuous ? "継続認識中" : "録音中"}
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <p className="font-medium">
-                    開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始
-                  </p>
-                  <p className="text-sm mt-1">AIが自動的に関連文書を検索します</p>
-                </div>
-              )}
-            </div>
-
-            {/* Chat Messages - Scrollable area that fills remaining space */}
-            <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-0">
-              <div className="space-y-4">
-                {chatMessages
-                  .filter((message) => message.type !== "system") // Hide system messages
-                  .map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={handleSendMessage}
+                      disabled={!userInput.trim() || isLoading}
+                      className="bg-blue-600 hover:bg-blue-700 h-full"
                     >
-                      <div
-                        className={`max-w-[85%] rounded-lg p-3 ${
-                          message.type === "user" ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-900"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          {message.type === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-                          <span className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</span>
-                          {message.isVoice && <Mic className="w-3 h-3" />}
-                          {message.metadata?.intelligentAnalysis && (
-                            <Badge variant="outline" className="text-xs">
-                              <Brain className="w-3 h-3 mr-1" />
-                              AI分析
-                            </Badge>
-                          )}
-                        </div>
-                        {message.imageData && (
-                          <img
-                            src={message.imageData || "/placeholder.svg"}
-                            alt="Captured frame"
-                            className="w-full max-w-xs rounded mb-2"
-                          />
-                        )}
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        {message.metadata?.processingTime && (
-                          <div className="text-xs opacity-70 mt-1">処理時間: {message.metadata.processingTime}ms</div>
-                        )}
-                        {message.metadata?.relevantDocuments && message.metadata.relevantDocuments.length > 0 && (
-                          <div className="text-xs opacity-70 mt-1">
-                            検索結果: {message.metadata.relevantDocuments.length}件の関連文書
-                          </div>
+                      {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (isListening) {
+                          stopListening(true) // Mark as manual stop
+                        } else {
+                          startListening(false) // Start single recognition
+                        }
+                      }}
+                      variant="outline"
+                      disabled={!isSpeechSupported}
+                      className={isListening && !isContinuous ? "bg-red-100 border-red-300" : ""}
+                      title={
+                        !isSpeechSupported
+                          ? "音声認識はサポートされていません"
+                          : isListening
+                            ? "音声入力を停止"
+                            : "音声入力を開始"
+                      }
+                    >
+                      {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Video Area - Mobile: middle */}
+                <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
+                  {isStarted ? (
+                    <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+                  ) : (
+                    <div className="text-gray-500 text-center p-4">
+                      <div className="mb-2">
+                        {inputMode === "camera" ? (
+                          <Camera className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
+                        ) : (
+                          <Monitor className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
                         )}
                       </div>
+                      <p className="font-medium">
+                        開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始
+                      </p>
+                      <p className="text-sm mt-1">AIが自動的に関連文書を検索します</p>
                     </div>
-                  ))}
-              </div>
-            </ScrollArea>
+                  )}
+                </div>
 
-            {/* Input Area - Fixed at bottom */}
-            <div className="flex gap-2 flex-shrink-0">
-              <div className="flex-grow relative">
-                <Textarea
-                  value={userInput}
-                  onChange={(e) => setUserInput(e.target.value)}
-                  placeholder={
-                    isListening
-                      ? "音声入力中..."
-                      : isContinuous
-                        ? "音声コマンド待機中（「送信」「カメラ起動」など）..."
-                        : "メッセージを入力（任意）..."
-                  }
-                  className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
-                  rows={2}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSendMessage()
-                    }
-                  }}
-                />
-                {isListening && (
-                  <div className="absolute top-2 right-2">
-                    <div className="flex items-center gap-1 text-red-600 text-xs">
-                      <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
-                      {isContinuous ? "継続認識中" : "録音中"}
-                    </div>
+                {/* Chat Messages - Mobile: bottom, scrollable */}
+                <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-0">
+                  <div className="space-y-4">
+                    {chatMessages
+                      .filter((message) => message.type !== "system") // Hide system messages
+                      .map((message) => (
+                        <div
+                          key={message.id}
+                          className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-lg p-3 ${
+                              message.type === "user" ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-900"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              {message.type === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                              <span className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</span>
+                              {message.isVoice && <Mic className="w-3 h-3" />}
+                              {message.metadata?.intelligentAnalysis && (
+                                <Badge variant="outline" className="text-xs">
+                                  <Brain className="w-3 h-3 mr-1" />
+                                  AI分析
+                                </Badge>
+                              )}
+                            </div>
+                            {message.imageData && (
+                              <img
+                                src={message.imageData || "/placeholder.svg"}
+                                alt="Captured frame"
+                                className="w-full max-w-xs rounded mb-2"
+                              />
+                            )}
+                            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                            {message.metadata?.processingTime && (
+                              <div className="text-xs opacity-70 mt-1">
+                                処理時間: {message.metadata.processingTime}ms
+                              </div>
+                            )}
+                            {message.metadata?.relevantDocuments && message.metadata.relevantDocuments.length > 0 && (
+                              <div className="text-xs opacity-70 mt-1">
+                                検索結果: {message.metadata.relevantDocuments.length}件の関連文書
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                   </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-2">
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={!userInput.trim() || isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 h-full"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                </Button>
-                <Button
-                  onClick={isListening ? stopListening : () => startListening(false)}
-                  variant="outline"
-                  disabled={!isSpeechSupported}
-                  className={isListening && !isContinuous ? "bg-red-100 border-red-300" : ""}
-                  title={
-                    !isSpeechSupported
-                      ? "音声認識はサポートされていません"
-                      : isListening
-                        ? "音声入力を停止"
-                        : "音声入力を開始"
-                  }
-                >
-                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </Button>
-              </div>
-            </div>
+                </ScrollArea>
+              </>
+            ) : (
+              <>
+                {/* Desktop Layout: Video first, then Chat, then Input */}
+                {/* Video Area - Desktop */}
+                <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
+                  {isStarted ? (
+                    <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+                  ) : (
+                    <div className="text-gray-500 text-center p-4">
+                      <div className="mb-2">
+                        {inputMode === "camera" ? (
+                          <Camera className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
+                        ) : (
+                          <Monitor className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2" />
+                        )}
+                      </div>
+                      <p className="font-medium">
+                        開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始
+                      </p>
+                      <p className="text-sm mt-1">AIが自動的に関連文書を検索します</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Chat Messages - Desktop: scrollable */}
+                <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-0">
+                  <div className="space-y-4">
+                    {chatMessages
+                      .filter((message) => message.type !== "system") // Hide system messages
+                      .map((message) => (
+                        <div
+                          key={message.id}
+                          className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-lg p-3 ${
+                              message.type === "user" ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-900"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              {message.type === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                              <span className="text-xs opacity-70">{message.timestamp.toLocaleTimeString()}</span>
+                              {message.isVoice && <Mic className="w-3 h-3" />}
+                              {message.metadata?.intelligentAnalysis && (
+                                <Badge variant="outline" className="text-xs">
+                                  <Brain className="w-3 h-3 mr-1" />
+                                  AI分析
+                                </Badge>
+                              )}
+                            </div>
+                            {message.imageData && (
+                              <img
+                                src={message.imageData || "/placeholder.svg"}
+                                alt="Captured frame"
+                                className="w-full max-w-xs rounded mb-2"
+                              />
+                            )}
+                            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                            {message.metadata?.processingTime && (
+                              <div className="text-xs opacity-70 mt-1">
+                                処理時間: {message.metadata.processingTime}ms
+                              </div>
+                            )}
+                            {message.metadata?.relevantDocuments && message.metadata.relevantDocuments.length > 0 && (
+                              <div className="text-xs opacity-70 mt-1">
+                                検索結果: {message.metadata.relevantDocuments.length}件の関連文書
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </ScrollArea>
+
+                {/* Input Area - Desktop: at bottom */}
+                <div className="flex gap-2 flex-shrink-0">
+                  <div className="flex-grow relative">
+                    <Textarea
+                      value={userInput}
+                      onChange={(e) => setUserInput(e.target.value)}
+                      placeholder={
+                        isListening
+                          ? "音声入力中..."
+                          : isContinuous
+                            ? "音声コマンド待機中（「送信」「カメラ起動」など）..."
+                            : "メッセージを入力（任意）..."
+                      }
+                      className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
+                      rows={2}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                    />
+                    {isListening && (
+                      <div className="absolute top-2 right-2">
+                        <div className="flex items-center gap-1 text-red-600 text-xs">
+                          <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
+                          {isContinuous ? "継続認識中" : "録音中"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={handleSendMessage}
+                      disabled={!userInput.trim() || isLoading}
+                      className="bg-blue-600 hover:bg-blue-700 h-full"
+                    >
+                      {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (isListening) {
+                          stopListening(true) // Mark as manual stop
+                        } else {
+                          startListening(false) // Start single recognition
+                        }
+                      }}
+                      variant="outline"
+                      disabled={!isSpeechSupported}
+                      className={isListening && !isContinuous ? "bg-red-100 border-red-300" : ""}
+                      title={
+                        !isSpeechSupported
+                          ? "音声認識はサポートされていません"
+                          : isListening
+                            ? "音声入力を停止"
+                            : "音声入力を開始"
+                      }
+                    >
+                      {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>

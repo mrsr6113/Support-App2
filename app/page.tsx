@@ -416,14 +416,15 @@ export default function AIVisionChatPage() {
       setStream(mediaStream)
 
       // Auto-enable voice features on mobile with delay to prevent conflicts
-      if (isMobile) {
+      if (isMobile && isSpeechSupported) {
         setIsVoiceEnabled(true)
-        if (isSpeechSupported) {
-          // Add delay to ensure camera is fully started
-          setTimeout(() => {
+        // Add delay to ensure camera is fully started - reset isStoppedRef for fresh start
+        setTimeout(() => {
+          // Reset the stopped flag to allow fresh voice recognition start
+          if (startListening) {
             startListening(true)
-          }, 1000)
-        }
+          }
+        }, 1500)
       }
 
       if (isAutoAnalysis) {
@@ -496,15 +497,10 @@ export default function AIVisionChatPage() {
       setIsStarted(false)
       setUserInput("")
       setError(null)
-
-      // Additional cleanup for mobile
-      if (isMobile) {
-        setIsVoiceEnabled(false)
-      }
     }, 100)
 
     console.log("Capture stopped successfully")
-  }, [stream, isListening, isContinuous, isSpeaking, isMobile, stopListening])
+  }, [stream, isListening, isContinuous, isSpeaking, stopListening])
 
   // Analysis functions
   const captureFrame = (): string | null => {
@@ -988,17 +984,17 @@ export default function AIVisionChatPage() {
     setError(null)
   }
 
-  // Calculate video area size - Fixed desktop size to v51 specifications
+  // Calculate video area size - Fixed for PC/Mobile differentiation
   const getVideoAreaClasses = () => {
     if (!isStarted) {
       return "w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center"
     }
-
+    // isMobileフラグでPCとスマホの表示サイズを切り替え
     if (isMobile) {
-      // Mobile: maintain current size
+      // スマホではh-[40vh] (現状の約2/3)
       return "w-full h-[40vh] bg-black rounded-lg overflow-hidden"
     } else {
-      // Desktop: revert to v51 size (h-64)
+      // PCでは以前のサイズh-64に戻す
       return "w-full h-64 bg-black rounded-lg overflow-hidden"
     }
   }
@@ -1263,10 +1259,10 @@ export default function AIVisionChatPage() {
           </CardTitle>
         </CardHeader>
 
-        {/* Main Content - Fixed Layout */}
+        {/* Main Content - Fixed Layout with Mobile-specific structure */}
         <CardContent className="flex-grow flex flex-col p-0 overflow-hidden">
           <div className="flex-grow flex flex-col p-2 sm:p-4 space-y-4 overflow-hidden">
-            {/* Controls */}
+            {/* Controls - Fixed at top */}
             <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 flex-shrink-0">
               <RadioGroup
                 value={inputMode}
@@ -1305,6 +1301,14 @@ export default function AIVisionChatPage() {
               </div>
             </div>
 
+            {/* Error Display - Fixed position */}
+            {(error || speechError) && (
+              <Alert variant="destructive" className="flex-shrink-0">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error || speechError}</AlertDescription>
+              </Alert>
+            )}
+
             {/* Video Area - Fixed with proper desktop/mobile sizing */}
             <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
               {isStarted ? (
@@ -1326,15 +1330,7 @@ export default function AIVisionChatPage() {
               )}
             </div>
 
-            {/* Error Display */}
-            {(error || speechError) && (
-              <Alert variant="destructive" className="flex-shrink-0">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error || speechError}</AlertDescription>
-              </Alert>
-            )}
-
-            {/* Chat Messages - Scrollable */}
+            {/* Chat Messages - Scrollable area that fills remaining space */}
             <ScrollArea className="flex-grow border rounded-lg p-2 sm:p-4 min-h-0">
               <div className="space-y-4">
                 {chatMessages
@@ -1382,7 +1378,7 @@ export default function AIVisionChatPage() {
               </div>
             </ScrollArea>
 
-            {/* Input Area - Fixed */}
+            {/* Input Area - Fixed at bottom */}
             <div className="flex gap-2 flex-shrink-0">
               <div className="flex-grow relative">
                 <Textarea

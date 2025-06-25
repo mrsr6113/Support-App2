@@ -988,29 +988,17 @@ export default function AIVisionChatPage() {
     setError(null)
   }
 
-<<<<<<< HEAD
-// Calculate video area size
-=======
   // Calculate video area size - Fixed desktop size to v51 specifications
->>>>>>> 691ed83aaf218075f27f9eabe7a54ff58545b919
   const getVideoAreaClasses = () => {
     if (!isStarted) {
       return "w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center"
     }
 
-    // isMobileフラグでPCとスマホの表示サイズを切り替え
     if (isMobile) {
-<<<<<<< HEAD
-      // スマホではh-[40vh] (現状の約2/3)
-      return "w-full h-[40vh] bg-black rounded-lg overflow-hidden"
-    } else {
-      // PCでは以前のサイズh-64に戻す
-=======
       // Mobile: maintain current size
       return "w-full h-[40vh] bg-black rounded-lg overflow-hidden"
     } else {
       // Desktop: revert to v51 size (h-64)
->>>>>>> 691ed83aaf218075f27f9eabe7a54ff58545b919
       return "w-full h-64 bg-black rounded-lg overflow-hidden"
     }
   }
@@ -1277,55 +1265,31 @@ export default function AIVisionChatPage() {
 
         {/* Main Content - Fixed Layout */}
         <CardContent className="flex-grow flex flex-col p-0 overflow-hidden">
-  {/* --- 1. コントロールエリア（固定） --- */}
-  <div className="p-2 border-b flex-shrink-0">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <RadioGroup
-        value={inputMode}
-        onValueChange={(value: "camera" | "screen") => setInputMode(value)}
-        className="flex items-center space-x-4"
-        disabled={isStarted}
-      >
-        <div className="flex items-center space-x-2">
-          <RadioGroupItem value="camera" id="camera" />
-          <Label htmlFor="camera" className="flex items-center gap-2 cursor-pointer">
-            <Camera className="w-4 h-4" />
-            カメラ
-          </Label>
-        </div>
-        <div className="flex items-center space-x-2">
-          <RadioGroupItem value="screen" id="screen" />
-          <Label htmlFor="screen" className="flex items-center gap-2 cursor-pointer">
-            <Monitor className="w-4 h-4" />
-            画面共有
-          </Label>
-        </div>
-      </RadioGroup>
-      <Button onClick={isStarted ? handleStop : handleStart} size="sm" variant={isStarted ? "destructive" : "default"}>
-        {isStarted ? (
-          <><Square className="w-4 h-4 mr-1" />停止</>
-        ) : (
-          <><Play className="w-4 h-4 mr-1" />開始</>
-        )}
-      </Button>
-    </div>
-  </div>
+          <div className="flex-grow flex flex-col p-2 sm:p-4 space-y-4 overflow-hidden">
+            {/* Controls */}
+            <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 flex-shrink-0">
+              <RadioGroup
+                value={inputMode}
+                onValueChange={(value: "camera" | "screen") => setInputMode(value)}
+                className="flex items-center space-x-4"
+                disabled={isStarted}
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="camera" id="camera" />
+                  <Label htmlFor="camera" className="flex items-center gap-2 cursor-pointer">
+                    <Camera className="w-4 h-4" />
+                    カメラ
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="screen" id="screen" />
+                  <Label htmlFor="screen" className="flex items-center gap-2 cursor-pointer">
+                    <Monitor className="w-4 h-4" />
+                    画面共有
+                  </Label>
+                </div>
+              </RadioGroup>
 
-<<<<<<< HEAD
-  {/* --- 2. ビデオ表示エリア（固定） --- */}
-  <div className={`${getVideoAreaClasses()} flex-shrink-0`}>
-    {isStarted ? (
-      <video ref={videoRef} className="w-full h-full object-contain" playsInline muted />
-    ) : (
-      <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-500">
-        <div className="text-center p-4">
-          <div className="mb-2">
-            {inputMode === "camera" ? (
-              <Camera className="w-10 h-10 mx-auto" />
-            ) : (
-              <Monitor className="w-10 h-10 mx-auto" />
-            )}
-=======
               <div className="flex gap-2">
                 {!isStarted ? (
                   <Button onClick={handleStart} size="sm" className="bg-green-600 hover:bg-green-700">
@@ -1474,83 +1438,8 @@ export default function AIVisionChatPage() {
                 </Button>
               </div>
             </div>
->>>>>>> 691ed83aaf218075f27f9eabe7a54ff58545b919
           </div>
-          <p className="font-medium">
-            開始ボタンを押して{inputMode === "camera" ? "カメラ" : "画面共有"}を開始
-          </p>
-        </div>
-      </div>
-    )}
-  </div>
-
-  {/* --- 3. メッセージ表示エリア（ここだけがスクロールする） --- */}
-  <ScrollArea className="flex-grow min-h-0" viewportRef={scrollAreaRef}>
-    <div className="p-2 sm:p-4 space-y-4">
-      {chatMessages
-        .filter((message) => message.type !== "system")
-        .map((message) => (
-          <div
-            key={message.id}
-            className={`flex items-start gap-3 ${message.type === "user" ? "justify-end" : "justify-start"}`}
-          >
-            {message.type === 'ai' && <Bot className="w-6 h-6 flex-shrink-0 text-blue-500 mt-1" />}
-            <div
-              className={`max-w-[85%] rounded-lg p-3 shadow-sm ${
-                message.type === "user" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900"
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1 text-xs opacity-70">
-                <span>{message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                {message.isVoice && <Mic className="w-3 h-3" />}
-              </div>
-              {message.imageData && <img src={message.imageData} alt="Captured" className="w-full max-w-xs rounded mb-2" />}
-              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-            </div>
-            {message.type === 'user' && <User className="w-6 h-6 flex-shrink-0 text-gray-500 mt-1" />}
-          </div>
-        ))}
-    </div>
-  </ScrollArea>
-
-  {/* --- 4. メッセージ入力エリア（固定） --- */}
-  <div className="p-2 border-t flex-shrink-0 bg-background">
-    {(error || speechError) && (
-      <Alert variant="destructive" className="mb-2">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{error || speechError}</AlertDescription>
-      </Alert>
-    )}
-    <div className="flex gap-2 items-start">
-      <Textarea
-        value={userInput}
-        onChange={(e) => setUserInput(e.target.value)}
-        placeholder={isListening ? "音声入力中..." : "メッセージを入力..."}
-        className="resize-none text-sm"
-        rows={2}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSendMessage();
-          }
-        }}
-      />
-      <div className="flex flex-col gap-1">
-        <Button onClick={() => handleSendMessage()} disabled={!userInput.trim() || isLoading} className="h-full">
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-        </Button>
-        <Button
-          onClick={isListening ? stopListening : () => startListening({ continuous: false })}
-          variant="outline"
-          size="icon"
-          className={isListening ? "border-red-500 text-red-500" : ""}
-        >
-          {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-        </Button>
-      </div>
-    </div>
-  </div>
-</CardContent>
+        </CardContent>
       </Card>
 
       {/* Edit RAG Document Dialog */}

@@ -1,52 +1,35 @@
 import { NextResponse } from "next/server"
-import { supabaseAdmin } from "@/lib/supabase"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.SUPABASE_URL!
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 export async function GET() {
   try {
-    // Check if the table exists first
-    const { data: tableExists, error: tableError } = await supabaseAdmin
-      .from("visual_analysis_prompts")
-      .select("id")
-      .limit(1)
-
-    if (tableError && tableError.code === "42P01") {
-      // Table doesn't exist
-      console.warn("Visual analysis prompts table does not exist. Please run the database setup script.")
-      return NextResponse.json({
-        success: true,
-        prompts: [],
-        message: "Database tables not initialized. Please run the setup script.",
-      })
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ success: false, error: "Supabase configuration missing" }, { status: 500 })
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("visual_analysis_prompts")
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    // is_active = true のプロンプトのみを取得し、priorityで並び替え
+    const { data: prompts, error } = await supabase
+      .from("analysis_prompts")
       .select("*")
       .eq("is_active", true)
-      .order("created_at", { ascending: false })
+      .order("priority", { ascending: false })
 
     if (error) {
       console.error("Supabase error:", error)
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-          prompts: [],
-        },
-        { status: 500 },
-      )
+      return NextResponse.json({ success: false, error: `Database error: ${error.message}` }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, prompts: data || [] })
+    return NextResponse.json({
+      success: true,
+      prompts: prompts || [],
+    })
   } catch (error) {
-    console.error("Visual prompts fetch error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Failed to fetch visual analysis prompts",
-        prompts: [],
-      },
-      { status: 500 },
-    )
+    console.error("Visual prompts API error:", error)
+    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })
   }
 }

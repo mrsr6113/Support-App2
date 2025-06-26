@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertCircle,
@@ -27,6 +27,7 @@ import {
   Mic,
   MicOff,
   Volume2,
+  VolumeX,
   Settings,
   Upload,
   Save,
@@ -75,52 +76,88 @@ interface SystemPrompt {
   is_default: boolean
 }
 
-// Enhanced speech recognition hook with voice commands
-const useSpeechRecognition = () => {
+// Enhanced universal speech recognition hook
+const useUniversalSpeechRecognition = () => {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isContinuous, setIsContinuous] = useState(false)
+  const [isInitialized, setIsInitialized] = useState(false)
   const recognitionRef = useRef<any>(null)
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Check browser support
   const isSupported =
     typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)
 
-  const startListening = (continuous = false) => {
+  // Initialize speech recognition
+  const initializeSpeechRecognition = () => {
     if (!isSupported) {
       setError("音声認識はこのブラウザではサポートされていません")
-      return
+      return false
     }
 
     try {
       const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
       recognitionRef.current = new SpeechRecognition()
 
-      recognitionRef.current.continuous = continuous
+      // Universal settings for all devices
+      recognitionRef.current.continuous = false
       recognitionRef.current.interimResults = true
       recognitionRef.current.lang = "ja-JP"
+      recognitionRef.current.maxAlternatives = 1
 
-      setIsContinuous(continuous)
-
+      // Event handlers
       recognitionRef.current.onstart = () => {
+        console.log("Speech recognition started")
         setIsListening(true)
         setError(null)
       }
 
       recognitionRef.current.onresult = (event: any) => {
-        const current = event.resultIndex
-        const transcript = event.results[current][0].transcript
-        setTranscript(transcript)
+        console.log("Speech recognition result:", event)
+        let finalTranscript = ""
+        let interimTranscript = ""
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
+          }
+        }
+
+        const currentTranscript = finalTranscript || interimTranscript
+        setTranscript(currentTranscript)
       }
 
       recognitionRef.current.onerror = (event: any) => {
         console.error("Speech recognition error:", event.error)
-        setError(`音声認識エラー: ${event.error}`)
+
+        let errorMessage = "音声認識エラーが発生しました"
+        switch (event.error) {
+          case "not-allowed":
+            errorMessage = "マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。"
+            break
+          case "no-speech":
+            errorMessage = "音声が検出されませんでした。もう一度お試しください。"
+            break
+          case "audio-capture":
+            errorMessage = "マイクにアクセスできません。デバイスを確認してください。"
+            break
+          case "network":
+            errorMessage = "ネットワークエラーが発生しました。"
+            break
+          default:
+            errorMessage = `音声認識エラー: ${event.error}`
+        }
+
+        setError(errorMessage)
         setIsListening(false)
 
-        // 継続モードの場合、エラー後に再開を試行
-        if (continuous && event.error !== "not-allowed") {
+        // Auto-retry for certain errors in continuous mode
+        if (isContinuous && !["not-allowed", "audio-capture"].includes(event.error)) {
           restartTimeoutRef.current = setTimeout(() => {
             startListening(true)
           }, 2000)
@@ -128,17 +165,81 @@ const useSpeechRecognition = () => {
       }
 
       recognitionRef.current.onend = () => {
+        console.log("Speech recognition ended")
         setIsListening(false)
 
-        // 継続モードの場合、自動的に再開
-        if (continuous) {
+        // Auto-restart in continuous mode
+        if (isContinuous) {
           restartTimeoutRef.current = setTimeout(() => {
             startListening(true)
           }, 1000)
         }
       }
 
-      recognitionRef.current.start()
+      setIsInitialized(true)
+      return true
+    } catch (err) {
+      console.error("Speech recognition initialization error:", err)
+      setError("音声認識の初期化に失敗しました")
+      return false
+    }
+  }
+
+  // Request microphone permission
+  const requestMicrophonePermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((track) => track.stop()) // Stop immediately, we just needed permission
+      return true
+    } catch (error) {
+      console.error("Microphone permission error:", error)
+      setError("マイクへのアクセス許可が必要です。ブラウザの設定を確認してください。")
+      return false
+    }
+  }
+
+  const startListening = async (continuous = false) => {
+    console.log("Starting speech recognition, continuous:", continuous)
+
+    if (!isSupported) {
+      setError("音声認識はこのブラウザではサポートされていません")
+      return
+    }
+
+    // Request microphone permission first
+    const hasPermission = await requestMicrophonePermission()
+    if (!hasPermission) {
+      return
+    }
+
+    // Initialize if not already done
+    if (!isInitialized) {
+      const initialized = initializeSpeechRecognition()
+      if (!initialized) {
+        return
+      }
+    }
+
+    // Stop any existing recognition
+    if (recognitionRef.current && isListening) {
+      recognitionRef.current.stop()
+    }
+
+    // Clear any restart timeouts
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current)
+      restartTimeoutRef.current = null
+    }
+
+    setIsContinuous(continuous)
+    setError(null)
+
+    try {
+      // Update settings for this session
+      if (recognitionRef.current) {
+        recognitionRef.current.continuous = continuous
+        recognitionRef.current.start()
+      }
     } catch (err) {
       console.error("Speech recognition start error:", err)
       setError("音声認識の開始に失敗しました")
@@ -147,12 +248,21 @@ const useSpeechRecognition = () => {
   }
 
   const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
+    console.log("Stopping speech recognition")
+
     if (restartTimeoutRef.current) {
       clearTimeout(restartTimeoutRef.current)
+      restartTimeoutRef.current = null
     }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch (err) {
+        console.error("Error stopping speech recognition:", err)
+      }
+    }
+
     setIsListening(false)
     setIsContinuous(false)
   }
@@ -160,6 +270,29 @@ const useSpeechRecognition = () => {
   const resetTranscript = () => {
     setTranscript("")
   }
+
+  // Initialize on mount
+  useEffect(() => {
+    if (isSupported && !isInitialized) {
+      initializeSpeechRecognition()
+    }
+  }, [isSupported, isInitialized])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current)
+      }
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop()
+        } catch (err) {
+          console.error("Cleanup error:", err)
+        }
+      }
+    }
+  }, [])
 
   return {
     isListening,
@@ -170,6 +303,86 @@ const useSpeechRecognition = () => {
     isSupported,
     error,
     isContinuous,
+    isInitialized,
+  }
+}
+
+// Enhanced TTS hook with fallback to browser SpeechSynthesis の部分を削除し、元のspeakText関数に戻す
+
+// 元のspeakText関数を復元
+const speakText = async (text: string) => {
+  if (!isVoiceEnabled || isSpeaking) return
+
+  try {
+    setIsSpeaking(true)
+    console.log("Starting TTS for text:", text.substring(0, 50) + "...")
+
+    // Stop any existing audio
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    const response = await fetch("/api/text-to-speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Language-Code": "ja-JP",
+      },
+      body: JSON.stringify({ text }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error("TTS API error:", errorText)
+      throw new Error(`TTS API error: ${response.status} ${response.statusText}`)
+    }
+
+    const audioBlob = await response.blob()
+
+    if (audioBlob.size === 0) {
+      throw new Error("Empty audio response")
+    }
+
+    const audioUrl = URL.createObjectURL(audioBlob)
+    const audio = new Audio(audioUrl)
+    audioRef.current = audio
+
+    // Enhanced audio event handling
+    audio.onloadeddata = () => {
+      console.log("Audio loaded successfully")
+    }
+
+    audio.oncanplaythrough = () => {
+      console.log("Audio can play through")
+      audio.play().catch((error) => {
+        console.error("Audio play error:", error)
+        setIsSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+      })
+    }
+
+    audio.onended = () => {
+      console.log("TTS playback completed")
+      setIsSpeaking(false)
+      URL.revokeObjectURL(audioUrl)
+      audioRef.current = null
+    }
+
+    audio.onerror = (error) => {
+      console.error("Audio playback error:", error)
+      setIsSpeaking(false)
+      URL.revokeObjectURL(audioUrl)
+      audioRef.current = null
+    }
+
+    // Set volume and load
+    audio.volume = 0.8
+    audio.load()
+  } catch (error) {
+    console.error("Text-to-speech error:", error)
+    setIsSpeaking(false)
+    setError("音声読み上げに失敗しました。APIキーの設定を確認してください。")
   }
 }
 
@@ -194,7 +407,6 @@ export default function AIVisionChatPage() {
   const [userInput, setUserInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isSpeaking, setIsSpeaking] = useState(false)
 
   // Media state
   const [inputMode, setInputMode] = useState<"camera" | "screen">("camera")
@@ -211,7 +423,7 @@ export default function AIVisionChatPage() {
   const [selectedAnalysisPrompt, setSelectedAnalysisPrompt] = useState<string>("default")
   const [visualAnalysisPrompts, setVisualAnalysisPrompts] = useState<any[]>([])
 
-  // Voice state
+  // Enhanced voice state
   const {
     isListening,
     transcript,
@@ -221,7 +433,12 @@ export default function AIVisionChatPage() {
     isSupported: isSpeechSupported,
     error: speechError,
     isContinuous,
-  } = useSpeechRecognition()
+    isInitialized,
+  } = useUniversalSpeechRecognition()
+
+  // Enhanced TTS state
+  // const { speak: speakText, stop: stopSpeaking, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech()
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
@@ -249,6 +466,7 @@ export default function AIVisionChatPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ragImageInputRef = useRef<HTMLInputElement>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // Mobile detection
   useEffect(() => {
@@ -302,6 +520,20 @@ export default function AIVisionChatPage() {
         return
       }
 
+      // Voice command: Stop camera
+      if (
+        lowerTranscript.includes("カメラ停止") ||
+        lowerTranscript.includes("かめらていし") ||
+        lowerTranscript.includes("停止") ||
+        lowerTranscript.includes("ていし")
+      ) {
+        if (isStarted) {
+          handleStop()
+        }
+        resetTranscript()
+        return
+      }
+
       // Regular input
       setUserInput(transcript.trim())
     }
@@ -321,13 +553,19 @@ export default function AIVisionChatPage() {
     }
   }
 
+  // loadSystemPrompts関数を修正してデフォルト選択を正しく設定
   const loadSystemPrompts = async () => {
     try {
       const response = await fetch("/api/supabase/system-prompts")
       if (response.ok) {
         const result = await response.json()
-        if (result.success) {
-          setSystemPrompts(result.prompts || [])
+        if (result.success && result.prompts) {
+          setSystemPrompts(result.prompts)
+          // is_defaultがtrueのプロンプトをデフォルトに設定
+          const defaultPrompt = result.prompts.find((p: SystemPrompt) => p.is_default)
+          if (defaultPrompt) {
+            setSelectedSystemPrompt(defaultPrompt.id)
+          }
         }
       }
     } catch (error) {
@@ -335,13 +573,24 @@ export default function AIVisionChatPage() {
     }
   }
 
+  // loadVisualAnalysisPrompts関数を修正
   const loadVisualAnalysisPrompts = async () => {
     try {
       const response = await fetch("/api/supabase/visual-prompts")
       if (response.ok) {
         const result = await response.json()
-        if (result.success) {
-          setVisualAnalysisPrompts(result.prompts || [])
+        if (result.success && result.prompts) {
+          // is_active=trueのプロンプトのみをフィルタリング
+          const activePrompts = result.prompts.filter((p: any) => p.is_active)
+          setVisualAnalysisPrompts(activePrompts)
+
+          // priorityが最大値のプロンプトをデフォルトに設定
+          if (activePrompts.length > 0) {
+            const defaultPrompt = activePrompts.reduce((prev: any, current: any) =>
+              prev.priority > current.priority ? prev : current,
+            )
+            setSelectedAnalysisPrompt(defaultPrompt.id)
+          }
         }
       }
     } catch (error) {
@@ -369,14 +618,6 @@ export default function AIVisionChatPage() {
       }
 
       setStream(mediaStream)
-
-      // Auto-enable voice features on mobile
-      if (isMobile) {
-        setIsVoiceEnabled(true)
-        if (isSpeechSupported) {
-          startListening(true) // Start continuous listening on mobile
-        }
-      }
 
       if (isAutoAnalysis) {
         startPeriodicAnalysis()
@@ -549,51 +790,7 @@ export default function AIVisionChatPage() {
       saveChatSession(sessionId, message)
     }
 
-    if (type === "ai" && isVoiceEnabled) {
-      speakText(content)
-    }
-  }
-
-  const speakText = async (text: string) => {
-    if (!isVoiceEnabled || isSpeaking) return
-
-    try {
-      setIsSpeaking(true)
-      console.log("Starting TTS for text:", text.substring(0, 50) + "...")
-
-      const response = await fetch("/api/text-to-speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      })
-
-      if (response.ok) {
-        const audioBlob = await response.blob()
-        const audioUrl = URL.createObjectURL(audioBlob)
-        const audio = new Audio(audioUrl)
-
-        audio.onended = () => {
-          setIsSpeaking(false)
-          URL.revokeObjectURL(audioUrl)
-          console.log("TTS playback completed")
-        }
-
-        audio.onerror = (error) => {
-          console.error("Audio playback error:", error)
-          setIsSpeaking(false)
-          URL.revokeObjectURL(audioUrl)
-        }
-
-        await audio.play()
-        console.log("TTS playback started")
-      } else {
-        console.error("TTS API error:", response.status, response.statusText)
-        setIsSpeaking(false)
-      }
-    } catch (error) {
-      console.error("Text-to-speech error:", error)
-      setIsSpeaking(false)
-    }
+    // Remove automatic TTS playback - only manual TTS via button
   }
 
   // Enhanced Intelligent Analysis function
@@ -724,6 +921,56 @@ export default function AIVisionChatPage() {
       } finally {
         setIsLoading(false)
       }
+    }
+  }
+
+  // Enhanced voice control functions
+  const handleVoiceToggle = async () => {
+    console.log("Voice toggle clicked, current state:", { isListening, isSpeechSupported, isInitialized })
+
+    if (!isSpeechSupported) {
+      setError("音声認識はこのブラウザではサポートされていません")
+      return
+    }
+
+    if (isListening) {
+      stopListening()
+    } else {
+      // Start single-shot voice recognition
+      try {
+        await startListening(false)
+      } catch (error) {
+        console.error("Failed to start voice recognition:", error)
+        setError("音声認識の開始に失敗しました")
+      }
+    }
+  }
+
+  const handleContinuousVoiceToggle = async () => {
+    if (isContinuous) {
+      stopListening()
+    } else {
+      // Start continuous voice recognition
+      await startListening(true)
+    }
+  }
+
+  // Enhanced TTS control function
+  const handleTTSToggle = async () => {
+    if (isSpeaking) {
+      // Stop current speech
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      setIsSpeaking(false)
+    } else {
+      // Read the current input or last AI message
+      const textToRead =
+        userInput.trim() ||
+        chatMessages.filter((msg) => msg.type === "ai").slice(-1)[0]?.content ||
+        "読み上げるテキストがありません"
+      await speakText(textToRead)
     }
   }
 
@@ -913,254 +1160,23 @@ export default function AIVisionChatPage() {
           <CardTitle className="flex items-center justify-between text-base sm:text-lg">
             <div className="flex items-center gap-2">
               <Brain className="w-5 h-5 sm:w-6 sm:h-6" />
-              Intelligent AI Vision Chat
+              Universal AI Vision Chat
               <Badge variant="default" className="ml-2 text-xs">
                 <Zap className="w-3 h-3 mr-1" />
-                Auto RAG
+                Voice + TTS
               </Badge>
             </div>
 
-            {/* Settings Button */}
-            <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Settings className="w-4 h-4" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>設定と知識ベース管理</SheetTitle>
-                  <SheetDescription>システム設定とRAG文書の管理を行います</SheetDescription>
-                </SheetHeader>
-
-                <Tabs defaultValue="settings" className="mt-6">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="settings">設定</TabsTrigger>
-                    <TabsTrigger value="rag">知識ベース</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="settings" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <Label>システムプロンプト</Label>
-                        <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="システムプロンプトを選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="default">デフォルト</SelectItem>
-                            {systemPrompts.map((prompt) => (
-                              <SelectItem key={prompt.id} value={prompt.id}>
-                                {prompt.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <Label>分析プロンプト</Label>
-                        <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="分析プロンプトを選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="default">デフォルト</SelectItem>
-                            {visualAnalysisPrompts.map((prompt) => (
-                              <SelectItem key={prompt.id} value={prompt.id}>
-                                {prompt.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <Label>分析頻度 (秒)</Label>
-                        <Select
-                          value={analysisFrequency.toString()}
-                          onValueChange={(value) => setAnalysisFrequency(Number.parseInt(value))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="5">5秒</SelectItem>
-                            <SelectItem value="10">10秒</SelectItem>
-                            <SelectItem value="20">20秒</SelectItem>
-                            <SelectItem value="30">30秒</SelectItem>
-                            <SelectItem value="60">60秒</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="auto-analysis"
-                            checked={isAutoAnalysis}
-                            onChange={(e) => setIsAutoAnalysis(e.target.checked)}
-                            className="rounded"
-                          />
-                          <Label htmlFor="auto-analysis">自動分析</Label>
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="voice-enabled"
-                            checked={isVoiceEnabled}
-                            onChange={(e) => setIsVoiceEnabled(e.target.checked)}
-                            className="rounded"
-                          />
-                          <Label htmlFor="voice-enabled">音声読み上げ</Label>
-                          {isSpeaking && <Volume2 className="w-4 h-4 text-blue-500" />}
-                        </div>
-                      </div>
-
-                      <div>
-                        <Label>知識ベース統計</Label>
-                        <div className="text-sm text-gray-600 mt-1">
-                          <p>登録文書数: {ragDocuments.length}件</p>
-                          <p>カテゴリ数: {[...new Set(ragDocuments.map((doc) => doc.category))].length}種類</p>
-                        </div>
-                      </div>
-
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                        <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4" />
-                          音声コマンド
-                        </h4>
-                        <ul className="text-sm text-green-700 space-y-1">
-                          <li>• 「送信」: メッセージを送信</li>
-                          <li>• 「カメラ起動」: カメラを開始</li>
-                          <li>• モバイルでは継続的な音声認識</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="rag" className="space-y-4 mt-4">
-                    {/* RAG Document Management */}
-                    <div className="border rounded-lg p-4">
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Plus className="w-5 h-5" />
-                        新しい文書を追加
-                      </h3>
-
-                      <div className="space-y-4">
-                        <div>
-                          <Label>文書タイトル</Label>
-                          <Input
-                            value={newRAGEntry.title}
-                            onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, title: e.target.value }))}
-                            placeholder="例: 警告アイコン対応手順"
-                          />
-                        </div>
-
-                        <div>
-                          <Label>カテゴリ</Label>
-                          <Select
-                            value={newRAGEntry.category}
-                            onValueChange={(value) => setNewRAGEntry((prev) => ({ ...prev, category: value }))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="カテゴリを選択" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CATEGORIES.map((category) => (
-                                <SelectItem key={category.value} value={category.value}>
-                                  {category.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <Label>文書内容</Label>
-                          <Textarea
-                            value={newRAGEntry.content}
-                            onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, content: e.target.value }))}
-                            placeholder="トラブルシューティング手順や解決方法を詳しく記述..."
-                            rows={3}
-                          />
-                        </div>
-
-                        <div>
-                          <Label>参考画像</Label>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              onClick={() => ragImageInputRef.current?.click()}
-                              variant="outline"
-                              size="sm"
-                              className="flex items-center gap-2"
-                            >
-                              <Upload className="w-4 h-4" />
-                              画像を選択
-                            </Button>
-                            {newRAGEntry.image && (
-                              <span className="text-sm text-gray-600">{newRAGEntry.image.name}</span>
-                            )}
-                          </div>
-                          <input
-                            ref={ragImageInputRef}
-                            type="file"
-                            accept="image/jpeg,image/jpg,image/png,image/webp"
-                            onChange={handleRAGImageUpload}
-                            className="hidden"
-                          />
-                        </div>
-
-                        <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
-                          {isLoading ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4 mr-2" />
-                          )}
-                          文書を保存
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Existing RAG Documents */}
-                    <div className="border rounded-lg p-4">
-                      <h4 className="font-semibold mb-3 flex items-center gap-2">
-                        <Database className="w-4 h-4" />
-                        登録済み文書 ({ragDocuments.length}件)
-                      </h4>
-                      <ScrollArea className="h-64">
-                        <div className="space-y-2">
-                          {ragDocuments.map((doc) => (
-                            <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <Search className="w-4 h-4 text-blue-500" />
-                                  <span className="font-medium text-sm">{doc.title}</span>
-                                  <Badge variant="outline" className="text-xs">
-                                    {doc.category}
-                                  </Badge>
-                                </div>
-                                <p className="text-xs text-gray-600 mt-1">{doc.content.substring(0, 80)}...</p>
-                              </div>
-                              <div className="flex gap-1">
-                                <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
-                                  <Edit className="w-3 h-3" />
-                                </Button>
-                                <Button onClick={() => deleteRAGEntry(doc.id)} variant="outline" size="sm">
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </SheetContent>
-            </Sheet>
+            {/* Settings Button - Fixed */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">設定</span>
+            </Button>
           </CardTitle>
         </CardHeader>
 
@@ -1278,19 +1294,13 @@ export default function AIVisionChatPage() {
               </div>
             </ScrollArea>
 
-            {/* Input Area - Fixed */}
+            {/* Input Area - Fixed with Clear Button Separation */}
             <div className="flex gap-2 flex-shrink-0">
               <div className="flex-grow relative">
                 <Textarea
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
-                  placeholder={
-                    isListening
-                      ? "音声入力中..."
-                      : isContinuous
-                        ? "音声コマンド待機中（「送信」「カメラ起動」など）..."
-                        : "メッセージを入力（任意）..."
-                  }
+                  placeholder={isListening ? "音声入力中..." : "メッセージを入力（任意）..."}
                   className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
                   rows={2}
                   onKeyDown={(e) => {
@@ -1304,24 +1314,30 @@ export default function AIVisionChatPage() {
                   <div className="absolute top-2 right-2">
                     <div className="flex items-center gap-1 text-red-600 text-xs">
                       <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
-                      {isContinuous ? "継続認識中" : "録音中"}
+                      音声入力中
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* Button Group - Clearly Separated Functions */}
               <div className="flex flex-col gap-2">
+                {/* Send Message Button */}
                 <Button
                   onClick={handleSendMessage}
                   disabled={!userInput.trim() || isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 h-full"
+                  className="bg-blue-600 hover:bg-blue-700"
+                  title="メッセージを送信"
                 >
                   {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 </Button>
+
+                {/* Voice Input Button */}
                 <Button
-                  onClick={isListening ? stopListening : () => startListening(false)}
+                  onClick={handleVoiceToggle}
                   variant="outline"
                   disabled={!isSpeechSupported}
-                  className={isListening && !isContinuous ? "bg-red-100 border-red-300" : ""}
+                  className={isListening ? "bg-red-100 border-red-300" : ""}
                   title={
                     !isSpeechSupported
                       ? "音声認識はサポートされていません"
@@ -1331,6 +1347,19 @@ export default function AIVisionChatPage() {
                   }
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </Button>
+
+                {/* Text-to-Speech Button */}
+                <Button
+                  onClick={handleTTSToggle}
+                  variant="outline"
+                  disabled={true}
+                  className={isSpeaking ? "bg-blue-100 border-blue-300" : ""}
+                  title={
+                    true ? "音声読み上げはサポートされていません" : isSpeaking ? "読み上げを停止" : "テキストを読み上げ"
+                  }
+                >
+                  {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                 </Button>
               </div>
             </div>
@@ -1377,6 +1406,248 @@ export default function AIVisionChatPage() {
 
       {/* Hidden canvas for image capture */}
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* Settings Panel - Fixed */}
+      <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+        <SheetContent className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto p-4">
+          <SheetHeader>
+            <SheetTitle>設定と知識ベース管理</SheetTitle>
+            <SheetDescription>システム設定とRAG文書の管理を行います</SheetDescription>
+          </SheetHeader>
+
+          <Tabs defaultValue="settings" className="mt-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="settings">設定</TabsTrigger>
+              <TabsTrigger value="rag">知識ベース</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="settings" className="space-y-4 mt-4 px-2">
+              <div className="grid grid-cols-1 gap-4 w-full">
+                {/* Voice and TTS Settings - Simplified */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                    <Mic className="w-4 h-4" />
+                    音声機能設定
+                  </h4>
+
+                  <div className="text-sm text-blue-700 space-y-1">
+                    <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
+                    <p>• 音声読み上げ: 利用不可</p>
+                    <p>• 初期化状態: {isInitialized ? "完了" : "未完了"}</p>
+                    <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
+                    <p>• 読み上げ状態: {isSpeaking ? "再生中" : "停止中"}</p>
+                  </div>
+                </div>
+
+                <div className="w-full">
+                  <Label className="text-sm font-medium">システムプロンプト</Label>
+                  <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="システムプロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {systemPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name} {prompt.is_default && "(デフォルト)"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full">
+                  <Label className="text-sm font-medium">分析プロンプト</Label>
+                  <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="分析プロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visualAnalysisPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full">
+                  <Label className="text-sm font-medium">分析頻度 (秒)</Label>
+                  <Select
+                    value={analysisFrequency.toString()}
+                    onValueChange={(value) => setAnalysisFrequency(Number.parseInt(value))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">5秒</SelectItem>
+                      <SelectItem value="10">10秒</SelectItem>
+                      <SelectItem value="20">20秒</SelectItem>
+                      <SelectItem value="30">30秒</SelectItem>
+                      <SelectItem value="60">60秒</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="auto-analysis"
+                      checked={isAutoAnalysis}
+                      onChange={(e) => setIsAutoAnalysis(e.target.checked)}
+                      className="rounded"
+                    />
+                    <Label htmlFor="auto-analysis">自動分析</Label>
+                  </div>
+                </div>
+
+                <div>
+                  <Label>知識ベース統計</Label>
+                  <div className="text-sm text-gray-600 mt-1">
+                    <p>登録文書数: {ragDocuments.length}件</p>
+                    <p>カテゴリ数: {[...new Set(ragDocuments.map((doc) => doc.category))].length}種類</p>
+                  </div>
+                </div>
+
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    音声コマンド
+                  </h4>
+                  <ul className="text-sm text-green-700 space-y-1">
+                    <li>• 「送信」: メッセージを送信</li>
+                    <li>• 「カメラ起動」: カメラを開始</li>
+                    <li>• 「停止」: カメラを停止</li>
+                    <li>• PC/モバイル両対応</li>
+                  </ul>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
+                    <Volume2 className="w-4 h-4" />
+                    TTS機能について
+                  </h4>
+                  <p className="text-sm text-yellow-700">Cloud TTSを使用します。</p>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="rag" className="space-y-4 mt-4">
+              {/* RAG Document Management */}
+              <div className="border rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Plus className="w-5 h-5" />
+                  新しい文書を追加
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <Label>文書タイトル</Label>
+                    <Input
+                      value={newRAGEntry.title}
+                      onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, title: e.target.value }))}
+                      placeholder="例: 警告アイコン対応手順"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>カテゴリ</Label>
+                    <Select
+                      value={newRAGEntry.category}
+                      onValueChange={(value) => setNewRAGEntry((prev) => ({ ...prev, category: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="カテゴリを選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>文書内容</Label>
+                    <Textarea
+                      value={newRAGEntry.content}
+                      onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, content: e.target.value }))}
+                      placeholder="トラブルシューティング手順や解決方法を詳しく記述..."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>参考画像</Label>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => ragImageInputRef.current?.click()}
+                        variant="outline"
+                        size="sm"
+                        className="flex items-center gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        画像を選択
+                      </Button>
+                      {newRAGEntry.image && <span className="text-sm text-gray-600">{newRAGEntry.image.name}</span>}
+                    </div>
+                    <input
+                      ref={ragImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png,image/webp"
+                      onChange={handleRAGImageUpload}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
+                    {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                    文書を保存
+                  </Button>
+                </div>
+              </div>
+
+              {/* Existing RAG Documents */}
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  登録済み文書 ({ragDocuments.length}件)
+                </h4>
+                <ScrollArea className="h-64">
+                  <div className="space-y-2">
+                    {ragDocuments.map((doc) => (
+                      <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Search className="w-4 h-4 text-blue-500" />
+                            <span className="font-medium text-sm">{doc.title}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {doc.category}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-1">{doc.content.substring(0, 80)}...</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
+                            <Edit className="w-3 h-3" />
+                          </Button>
+                          <Button onClick={() => deleteRAGEntry(doc.id)} variant="outline" size="sm">
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

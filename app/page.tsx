@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertCircle,
@@ -1120,262 +1120,16 @@ export default function AIVisionChatPage() {
               </Badge>
             </div>
 
-            {/* Settings Button */}
-            <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Settings className="w-4 h-4" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>設定と知識ベース管理</SheetTitle>
-                  <SheetDescription>システム設定とRAG文書の管理を行います</SheetDescription>
-                </SheetHeader>
-
-                <Tabs defaultValue="settings" className="mt-6">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="settings">設定</TabsTrigger>
-                    <TabsTrigger value="rag">知識ベース</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="settings" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <Label>システムプロンプト</Label>
-                        <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="システムプロンプトを選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="default">デフォルト</SelectItem>
-                            {systemPrompts.map((prompt) => (
-                              <SelectItem key={prompt.id} value={prompt.id}>
-                                {prompt.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <Label>分析プロンプト</Label>
-                        <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="分析プロンプトを選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="default">デフォルト</SelectItem>
-                            {visualAnalysisPrompts.map((prompt) => (
-                              <SelectItem key={prompt.id} value={prompt.id}>
-                                {prompt.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <Label>分析頻度 (秒)</Label>
-                        <Select
-                          value={analysisFrequency.toString()}
-                          onValueChange={(value) => setAnalysisFrequency(Number.parseInt(value))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="5">5秒</SelectItem>
-                            <SelectItem value="10">10秒</SelectItem>
-                            <SelectItem value="20">20秒</SelectItem>
-                            <SelectItem value="30">30秒</SelectItem>
-                            <SelectItem value="60">60秒</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="auto-analysis"
-                            checked={isAutoAnalysis}
-                            onChange={(e) => setIsAutoAnalysis(e.target.checked)}
-                            className="rounded"
-                          />
-                          <Label htmlFor="auto-analysis">自動分析</Label>
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="voice-enabled"
-                            checked={isVoiceEnabled}
-                            onChange={(e) => setIsVoiceEnabled(e.target.checked)}
-                            className="rounded"
-                          />
-                          <Label htmlFor="voice-enabled">音声読み上げ</Label>
-                          {isSpeaking ? (
-                            <Volume2 className="w-4 h-4 text-blue-500" />
-                          ) : (
-                            <VolumeX className="w-4 h-4 text-gray-400" />
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <Label>音声認識状態</Label>
-                        <div className="text-sm text-gray-600 mt-1">
-                          <p>サポート: {isSpeechSupported ? "✓" : "✗"}</p>
-                          <p>初期化: {isInitialized ? "✓" : "✗"}</p>
-                          <p>認識中: {isListening ? "✓" : "✗"}</p>
-                          <p>継続モード: {isContinuous ? "✓" : "✗"}</p>
-                        </div>
-                      </div>
-
-                      <div>
-                        <Label>知識ベース統計</Label>
-                        <div className="text-sm text-gray-600 mt-1">
-                          <p>登録文書数: {ragDocuments.length}件</p>
-                          <p>カテゴリ数: {[...new Set(ragDocuments.map((doc) => doc.category))].length}種類</p>
-                        </div>
-                      </div>
-
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                        <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4" />
-                          音声コマンド
-                        </h4>
-                        <ul className="text-sm text-green-700 space-y-1">
-                          <li>• 「送信」: メッセージを送信</li>
-                          <li>• 「カメラ起動」: カメラを開始</li>
-                          <li>• 「停止」: カメラを停止</li>
-                          <li>• PC/モバイル両対応</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="rag" className="space-y-4 mt-4">
-                    {/* RAG Document Management */}
-                    <div className="border rounded-lg p-4">
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Plus className="w-5 h-5" />
-                        新しい文書を追加
-                      </h3>
-
-                      <div className="space-y-4">
-                        <div>
-                          <Label>文書タイトル</Label>
-                          <Input
-                            value={newRAGEntry.title}
-                            onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, title: e.target.value }))}
-                            placeholder="例: 警告アイコン対応手順"
-                          />
-                        </div>
-
-                        <div>
-                          <Label>カテゴリ</Label>
-                          <Select
-                            value={newRAGEntry.category}
-                            onValueChange={(value) => setNewRAGEntry((prev) => ({ ...prev, category: value }))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="カテゴリを選択" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CATEGORIES.map((category) => (
-                                <SelectItem key={category.value} value={category.value}>
-                                  {category.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <Label>文書内容</Label>
-                          <Textarea
-                            value={newRAGEntry.content}
-                            onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, content: e.target.value }))}
-                            placeholder="トラブルシューティング手順や解決方法を詳しく記述..."
-                            rows={3}
-                          />
-                        </div>
-
-                        <div>
-                          <Label>参考画像</Label>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              onClick={() => ragImageInputRef.current?.click()}
-                              variant="outline"
-                              size="sm"
-                              className="flex items-center gap-2"
-                            >
-                              <Upload className="w-4 h-4" />
-                              画像を選択
-                            </Button>
-                            {newRAGEntry.image && (
-                              <span className="text-sm text-gray-600">{newRAGEntry.image.name}</span>
-                            )}
-                          </div>
-                          <input
-                            ref={ragImageInputRef}
-                            type="file"
-                            accept="image/jpeg,image/jpg,image/png,image/webp"
-                            onChange={handleRAGImageUpload}
-                            className="hidden"
-                          />
-                        </div>
-
-                        <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
-                          {isLoading ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4 mr-2" />
-                          )}
-                          文書を保存
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Existing RAG Documents */}
-                    <div className="border rounded-lg p-4">
-                      <h4 className="font-semibold mb-3 flex items-center gap-2">
-                        <Database className="w-4 h-4" />
-                        登録済み文書 ({ragDocuments.length}件)
-                      </h4>
-                      <ScrollArea className="h-64">
-                        <div className="space-y-2">
-                          {ragDocuments.map((doc) => (
-                            <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <Search className="w-4 h-4 text-blue-500" />
-                                  <span className="font-medium text-sm">{doc.title}</span>
-                                  <Badge variant="outline" className="text-xs">
-                                    {doc.category}
-                                  </Badge>
-                                </div>
-                                <p className="text-xs text-gray-600 mt-1">{doc.content.substring(0, 80)}...</p>
-                              </div>
-                              <div className="flex gap-1">
-                                <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
-                                  <Edit className="w-3 h-3" />
-                                </Button>
-                                <Button onClick={() => deleteRAGEntry(doc.id)} variant="outline" size="sm">
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </SheetContent>
-            </Sheet>
+            {/* Settings Button - Fixed */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">設定</span>
+            </Button>
           </CardTitle>
         </CardHeader>
 
@@ -1493,19 +1247,13 @@ export default function AIVisionChatPage() {
               </div>
             </ScrollArea>
 
-            {/* Input Area - Fixed */}
+            {/* Input Area - Fixed with Clear Button Separation */}
             <div className="flex gap-2 flex-shrink-0">
               <div className="flex-grow relative">
                 <Textarea
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
-                  placeholder={
-                    isListening
-                      ? "音声入力中..."
-                      : isContinuous
-                        ? "音声コマンド待機中（「送信」「カメラ起動」など）..."
-                        : "メッセージを入力（任意）..."
-                  }
+                  placeholder={isListening ? "音声入力中..." : "メッセージを入力（任意）..."}
                   className={`resize-none ${isListening ? "border-red-300 bg-red-50" : ""}`}
                   rows={2}
                   onKeyDown={(e) => {
@@ -1519,53 +1267,69 @@ export default function AIVisionChatPage() {
                   <div className="absolute top-2 right-2">
                     <div className="flex items-center gap-1 text-red-600 text-xs">
                       <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
-                      {isContinuous ? "継続認識中" : "録音中"}
+                      音声入力中
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* Button Group - Clearly Separated Functions */}
               <div className="flex flex-col gap-2">
+                {/* Send Message Button */}
                 <Button
                   onClick={handleSendMessage}
                   disabled={!userInput.trim() || isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 h-full"
+                  className="bg-blue-600 hover:bg-blue-700"
+                  title="メッセージを送信"
                 >
                   {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 </Button>
-                <div className="flex gap-1">
-                  <Button
-                    onClick={handleVoiceToggle}
-                    variant="outline"
-                    disabled={!isSpeechSupported}
-                    className={isListening && !isContinuous ? "bg-red-100 border-red-300" : ""}
-                    title={
-                      !isSpeechSupported
-                        ? "音声認識はサポートされていません"
-                        : isListening && !isContinuous
-                          ? "音声入力を停止"
-                          : "音声入力を開始"
+
+                {/* Voice Input Button */}
+                <Button
+                  onClick={handleVoiceToggle}
+                  variant="outline"
+                  disabled={!isSpeechSupported}
+                  className={isListening ? "bg-red-100 border-red-300" : ""}
+                  title={
+                    !isSpeechSupported
+                      ? "音声認識はサポートされていません"
+                      : isListening
+                        ? "音声入力を停止"
+                        : "音声入力を開始"
+                  }
+                >
+                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </Button>
+
+                {/* Text-to-Speech Button */}
+                <Button
+                  onClick={() => {
+                    if (isSpeaking) {
+                      // Stop current speech
+                      if (audioRef.current) {
+                        audioRef.current.pause()
+                        audioRef.current = null
+                      }
+                      setIsSpeaking(false)
+                    } else {
+                      // Read the current input or last AI message
+                      const textToRead =
+                        userInput.trim() ||
+                        chatMessages.filter((msg) => msg.type === "ai").slice(-1)[0]?.content ||
+                        "読み上げるテキストがありません"
+                      speakText(textToRead)
                     }
-                    size="sm"
-                  >
-                    {isListening && !isContinuous ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                  </Button>
-                  <Button
-                    onClick={handleContinuousVoiceToggle}
-                    variant="outline"
-                    disabled={!isSpeechSupported}
-                    className={isContinuous ? "bg-green-100 border-green-300" : ""}
-                    title={
-                      !isSpeechSupported
-                        ? "音声認識はサポートされていません"
-                        : isContinuous
-                          ? "継続音声認識を停止"
-                          : "継続音声認識を開始"
-                    }
-                    size="sm"
-                  >
-                    {isContinuous ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                  </Button>
-                </div>
+                  }}
+                  variant="outline"
+                  disabled={!isVoiceEnabled}
+                  className={isSpeaking ? "bg-blue-100 border-blue-300" : ""}
+                  title={
+                    !isVoiceEnabled ? "音声読み上げが無効です" : isSpeaking ? "読み上げを停止" : "テキストを読み上げ"
+                  }
+                >
+                  {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </Button>
               </div>
             </div>
           </div>
@@ -1611,6 +1375,260 @@ export default function AIVisionChatPage() {
 
       {/* Hidden canvas for image capture */}
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* Settings Panel - Fixed */}
+      <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>設定と知識ベース管理</SheetTitle>
+            <SheetDescription>システム設定とRAG文書の管理を行います</SheetDescription>
+          </SheetHeader>
+
+          <Tabs defaultValue="settings" className="mt-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="settings">設定</TabsTrigger>
+              <TabsTrigger value="rag">知識ベース</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="settings" className="space-y-4 mt-4">
+              <div className="grid grid-cols-1 gap-4">
+                {/* Voice and TTS Settings */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                    <Volume2 className="w-4 h-4" />
+                    音声機能設定
+                  </h4>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="voice-enabled">音声読み上げ</Label>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="voice-enabled"
+                          checked={isVoiceEnabled}
+                          onChange={(e) => setIsVoiceEnabled(e.target.checked)}
+                          className="rounded"
+                        />
+                        {isSpeaking ? (
+                          <Volume2 className="w-4 h-4 text-blue-500" />
+                        ) : (
+                          <VolumeX className="w-4 h-4 text-gray-400" />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-sm text-blue-700">
+                      <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
+                      <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
+                      <p>• 読み上げ: {isSpeaking ? "再生中" : "停止中"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <Label>システムプロンプト</Label>
+                  <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="システムプロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">デフォルト</SelectItem>
+                      {systemPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>分析プロンプト</Label>
+                  <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="分析プロンプトを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">デフォルト</SelectItem>
+                      {visualAnalysisPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>分析頻度 (秒)</Label>
+                  <Select
+                    value={analysisFrequency.toString()}
+                    onValueChange={(value) => setAnalysisFrequency(Number.parseInt(value))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">5秒</SelectItem>
+                      <SelectItem value="10">10秒</SelectItem>
+                      <SelectItem value="20">20秒</SelectItem>
+                      <SelectItem value="30">30秒</SelectItem>
+                      <SelectItem value="60">60秒</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="auto-analysis"
+                      checked={isAutoAnalysis}
+                      onChange={(e) => setIsAutoAnalysis(e.target.checked)}
+                      className="rounded"
+                    />
+                    <Label htmlFor="auto-analysis">自動分析</Label>
+                  </div>
+                </div>
+
+                <div>
+                  <Label>知識ベース統計</Label>
+                  <div className="text-sm text-gray-600 mt-1">
+                    <p>登録文書数: {ragDocuments.length}件</p>
+                    <p>カテゴリ数: {[...new Set(ragDocuments.map((doc) => doc.category))].length}種類</p>
+                  </div>
+                </div>
+
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    音声コマンド
+                  </h4>
+                  <ul className="text-sm text-green-700 space-y-1">
+                    <li>• 「送信」: メッセージを送信</li>
+                    <li>• 「カメラ起動」: カメラを開始</li>
+                    <li>• 「停止」: カメラを停止</li>
+                    <li>• PC/モバイル両対応</li>
+                  </ul>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="rag" className="space-y-4 mt-4">
+              {/* RAG Document Management */}
+              <div className="border rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Plus className="w-5 h-5" />
+                  新しい文書を追加
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <Label>文書タイトル</Label>
+                    <Input
+                      value={newRAGEntry.title}
+                      onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, title: e.target.value }))}
+                      placeholder="例: 警告アイコン対応手順"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>カテゴリ</Label>
+                    <Select
+                      value={newRAGEntry.category}
+                      onValueChange={(value) => setNewRAGEntry((prev) => ({ ...prev, category: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="カテゴリを選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>文書内容</Label>
+                    <Textarea
+                      value={newRAGEntry.content}
+                      onChange={(e) => setNewRAGEntry((prev) => ({ ...prev, content: e.target.value }))}
+                      placeholder="トラブルシューティング手順や解決方法を詳しく記述..."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>参考画像</Label>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => ragImageInputRef.current?.click()}
+                        variant="outline"
+                        size="sm"
+                        className="flex items-center gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        画像を選択
+                      </Button>
+                      {newRAGEntry.image && <span className="text-sm text-gray-600">{newRAGEntry.image.name}</span>}
+                    </div>
+                    <input
+                      ref={ragImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png,image/webp"
+                      onChange={handleRAGImageUpload}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <Button onClick={saveRAGEntry} disabled={isLoading} className="w-full">
+                    {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                    文書を保存
+                  </Button>
+                </div>
+              </div>
+
+              {/* Existing RAG Documents */}
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  登録済み文書 ({ragDocuments.length}件)
+                </h4>
+                <ScrollArea className="h-64">
+                  <div className="space-y-2">
+                    {ragDocuments.map((doc) => (
+                      <div key={doc.id} className="flex items-center justify-between p-3 border rounded">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Search className="w-4 h-4 text-blue-500" />
+                            <span className="font-medium text-sm">{doc.title}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {doc.category}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-1">{doc.content.substring(0, 80)}...</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button onClick={() => startEditRAGEntry(doc)} variant="outline" size="sm">
+                            <Edit className="w-3 h-3" />
+                          </Button>
+                          <Button onClick={() => deleteRAGEntry(doc.id)} variant="outline" size="sm">
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

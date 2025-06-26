@@ -307,71 +307,16 @@ const useUniversalSpeechRecognition = () => {
   }
 }
 
-// Enhanced TTS hook with fallback to browser SpeechSynthesis
-const useTextToSpeech = () => {
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [isSupported, setIsSupported] = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+// Enhanced TTS hook with fallback to browser SpeechSynthesis の部分を削除し、元のspeakText関数に戻す
 
-  useEffect(() => {
-    // Check if browser supports SpeechSynthesis
-    setIsSupported(typeof window !== "undefined" && "speechSynthesis" in window)
-  }, [])
+// 元のspeakText関数を復元
+const speakText = async (text: string) => {
+  if (!isVoiceEnabled || isSpeaking) return
 
-  const speakWithBrowserAPI = (text: string) => {
-    return new Promise<void>((resolve, reject) => {
-      try {
-        // Stop any existing speech
-        if (window.speechSynthesis.speaking) {
-          window.speechSynthesis.cancel()
-        }
+  try {
+    setIsSpeaking(true)
+    console.log("Starting TTS for text:", text.substring(0, 50) + "...")
 
-        const utterance = new SpeechSynthesisUtterance(text)
-        utteranceRef.current = utterance
-
-        // Configure utterance
-        utterance.lang = "ja-JP"
-        utterance.rate = 1.0
-        utterance.pitch = 1.0
-        utterance.volume = 0.8
-
-        // Try to find a Japanese voice
-        const voices = window.speechSynthesis.getVoices()
-        const japaneseVoice = voices.find((voice) => voice.lang.startsWith("ja"))
-        if (japaneseVoice) {
-          utterance.voice = japaneseVoice
-        }
-
-        utterance.onstart = () => {
-          console.log("Browser TTS started")
-          setIsSpeaking(true)
-        }
-
-        utterance.onend = () => {
-          console.log("Browser TTS ended")
-          setIsSpeaking(false)
-          utteranceRef.current = null
-          resolve()
-        }
-
-        utterance.onerror = (event) => {
-          console.error("Browser TTS error:", event.error)
-          setIsSpeaking(false)
-          utteranceRef.current = null
-          reject(new Error(`Browser TTS error: ${event.error}`))
-        }
-
-        window.speechSynthesis.speak(utterance)
-      } catch (error) {
-        console.error("Browser TTS setup error:", error)
-        setIsSpeaking(false)
-        reject(error)
-      }
-    })
-  }
-
-  const speakWithCloudAPI = async (text: string) => {
     // Stop any existing audio
     if (audioRef.current) {
       audioRef.current.pause()
@@ -388,7 +333,9 @@ const useTextToSpeech = () => {
     })
 
     if (!response.ok) {
-      throw new Error(`Cloud TTS API error: ${response.status} ${response.statusText}`)
+      const errorText = await response.text()
+      console.error("TTS API error:", errorText)
+      throw new Error(`TTS API error: ${response.status} ${response.statusText}`)
     }
 
     const audioBlob = await response.blob()
@@ -397,118 +344,45 @@ const useTextToSpeech = () => {
       throw new Error("Empty audio response")
     }
 
-    return new Promise<void>((resolve, reject) => {
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      audioRef.current = audio
+    const audioUrl = URL.createObjectURL(audioBlob)
+    const audio = new Audio(audioUrl)
+    audioRef.current = audio
 
-      audio.onloadeddata = () => {
-        console.log("Cloud TTS audio loaded successfully")
-      }
-
-      audio.oncanplaythrough = () => {
-        console.log("Cloud TTS audio can play through")
-        setIsSpeaking(true)
-        audio.play().catch((error) => {
-          console.error("Cloud TTS audio play error:", error)
-          setIsSpeaking(false)
-          URL.revokeObjectURL(audioUrl)
-          reject(error)
-        })
-      }
-
-      audio.onended = () => {
-        console.log("Cloud TTS playback completed")
-        setIsSpeaking(false)
-        URL.revokeObjectURL(audioUrl)
-        audioRef.current = null
-        resolve()
-      }
-
-      audio.onerror = (error) => {
-        console.error("Cloud TTS audio playback error:", error)
-        setIsSpeaking(false)
-        URL.revokeObjectURL(audioUrl)
-        audioRef.current = null
-        reject(error)
-      }
-
-      // Set volume and load
-      audio.volume = 0.8
-      audio.load()
-    })
-  }
-
-  const speak = async (text: string) => {
-    if (isSpeaking) {
-      console.log("Already speaking, ignoring new request")
-      return
+    // Enhanced audio event handling
+    audio.onloadeddata = () => {
+      console.log("Audio loaded successfully")
     }
 
-    console.log("Starting TTS for text:", text.substring(0, 50) + "...")
-
-    try {
-      // Try Cloud API first
-      await speakWithCloudAPI(text)
-      console.log("Cloud TTS completed successfully")
-    } catch (cloudError) {
-      console.warn("Cloud TTS failed, falling back to browser API:", cloudError)
-
-      if (!isSupported) {
-        console.error("Browser TTS not supported")
-        throw new Error("音声読み上げ機能が利用できません")
-      }
-
-      try {
-        // Wait for voices to be loaded
-        if (window.speechSynthesis.getVoices().length === 0) {
-          await new Promise<void>((resolve) => {
-            const checkVoices = () => {
-              if (window.speechSynthesis.getVoices().length > 0) {
-                resolve()
-              } else {
-                setTimeout(checkVoices, 100)
-              }
-            }
-            checkVoices()
-          })
-        }
-
-        await speakWithBrowserAPI(text)
-        console.log("Browser TTS completed successfully")
-      } catch (browserError) {
-        console.error("Browser TTS also failed:", browserError)
-        throw new Error("音声読み上げに失敗しました")
-      }
+    audio.oncanplaythrough = () => {
+      console.log("Audio can play through")
+      audio.play().catch((error) => {
+        console.error("Audio play error:", error)
+        setIsSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+      })
     }
-  }
 
-  const stop = () => {
-    console.log("Stopping TTS")
-
-    // Stop Cloud API audio
-    if (audioRef.current) {
-      audioRef.current.pause()
+    audio.onended = () => {
+      console.log("TTS playback completed")
+      setIsSpeaking(false)
+      URL.revokeObjectURL(audioUrl)
       audioRef.current = null
     }
 
-    // Stop browser TTS
-    if (window.speechSynthesis && window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel()
+    audio.onerror = (error) => {
+      console.error("Audio playback error:", error)
+      setIsSpeaking(false)
+      URL.revokeObjectURL(audioUrl)
+      audioRef.current = null
     }
 
-    if (utteranceRef.current) {
-      utteranceRef.current = null
-    }
-
+    // Set volume and load
+    audio.volume = 0.8
+    audio.load()
+  } catch (error) {
+    console.error("Text-to-speech error:", error)
     setIsSpeaking(false)
-  }
-
-  return {
-    speak,
-    stop,
-    isSpeaking,
-    isSupported,
+    setError("音声読み上げに失敗しました。APIキーの設定を確認してください。")
   }
 }
 
@@ -563,7 +437,8 @@ export default function AIVisionChatPage() {
   } = useUniversalSpeechRecognition()
 
   // Enhanced TTS state
-  const { speak: speakText, stop: stopSpeaking, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech()
+  // const { speak: speakText, stop: stopSpeaking, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech()
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
@@ -591,6 +466,7 @@ export default function AIVisionChatPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ragImageInputRef = useRef<HTMLInputElement>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // Mobile detection
   useEffect(() => {
@@ -677,13 +553,19 @@ export default function AIVisionChatPage() {
     }
   }
 
+  // loadSystemPrompts関数を修正してデフォルト選択を正しく設定
   const loadSystemPrompts = async () => {
     try {
       const response = await fetch("/api/supabase/system-prompts")
       if (response.ok) {
         const result = await response.json()
-        if (result.success) {
-          setSystemPrompts(result.prompts || [])
+        if (result.success && result.prompts) {
+          setSystemPrompts(result.prompts)
+          // is_defaultがtrueのプロンプトをデフォルトに設定
+          const defaultPrompt = result.prompts.find((p: SystemPrompt) => p.is_default)
+          if (defaultPrompt) {
+            setSelectedSystemPrompt(defaultPrompt.id)
+          }
         }
       }
     } catch (error) {
@@ -691,13 +573,24 @@ export default function AIVisionChatPage() {
     }
   }
 
+  // loadVisualAnalysisPrompts関数を修正
   const loadVisualAnalysisPrompts = async () => {
     try {
       const response = await fetch("/api/supabase/visual-prompts")
       if (response.ok) {
         const result = await response.json()
-        if (result.success) {
-          setVisualAnalysisPrompts(result.prompts || [])
+        if (result.success && result.prompts) {
+          // is_active=trueのプロンプトのみをフィルタリング
+          const activePrompts = result.prompts.filter((p: any) => p.is_active)
+          setVisualAnalysisPrompts(activePrompts)
+
+          // priorityが最大値のプロンプトをデフォルトに設定
+          if (activePrompts.length > 0) {
+            const defaultPrompt = activePrompts.reduce((prev: any, current: any) =>
+              prev.priority > current.priority ? prev : current,
+            )
+            setSelectedAnalysisPrompt(defaultPrompt.id)
+          }
         }
       }
     } catch (error) {
@@ -1065,20 +958,19 @@ export default function AIVisionChatPage() {
   // Enhanced TTS control function
   const handleTTSToggle = async () => {
     if (isSpeaking) {
-      stopSpeaking()
+      // Stop current speech
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      setIsSpeaking(false)
     } else {
       // Read the current input or last AI message
       const textToRead =
         userInput.trim() ||
         chatMessages.filter((msg) => msg.type === "ai").slice(-1)[0]?.content ||
         "読み上げるテキストがありません"
-
-      try {
-        await speakText(textToRead)
-      } catch (error) {
-        console.error("TTS error:", error)
-        setError("音声読み上げに失敗しました")
-      }
+      await speakText(textToRead)
     }
   }
 
@@ -1461,14 +1353,10 @@ export default function AIVisionChatPage() {
                 <Button
                   onClick={handleTTSToggle}
                   variant="outline"
-                  disabled={!isTTSSupported}
+                  disabled={true}
                   className={isSpeaking ? "bg-blue-100 border-blue-300" : ""}
                   title={
-                    !isTTSSupported
-                      ? "音声読み上げはサポートされていません"
-                      : isSpeaking
-                        ? "読み上げを停止"
-                        : "テキストを読み上げ"
+                    true ? "音声読み上げはサポートされていません" : isSpeaking ? "読み上げを停止" : "テキストを読み上げ"
                   }
                 >
                   {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -1521,7 +1409,7 @@ export default function AIVisionChatPage() {
 
       {/* Settings Panel - Fixed */}
       <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto p-4">
           <SheetHeader>
             <SheetTitle>設定と知識ベース管理</SheetTitle>
             <SheetDescription>システム設定とRAG文書の管理を行います</SheetDescription>
@@ -1533,8 +1421,8 @@ export default function AIVisionChatPage() {
               <TabsTrigger value="rag">知識ベース</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="settings" className="space-y-4 mt-4">
-              <div className="grid grid-cols-1 gap-4">
+            <TabsContent value="settings" className="space-y-4 mt-4 px-2">
+              <div className="grid grid-cols-1 gap-4 w-full">
                 {/* Voice and TTS Settings - Simplified */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
@@ -1544,38 +1432,36 @@ export default function AIVisionChatPage() {
 
                   <div className="text-sm text-blue-700 space-y-1">
                     <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
-                    <p>• 音声読み上げ: {isTTSSupported ? "利用可能" : "利用不可"}</p>
+                    <p>• 音声読み上げ: 利用不可</p>
                     <p>• 初期化状態: {isInitialized ? "完了" : "未完了"}</p>
                     <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
                     <p>• 読み上げ状態: {isSpeaking ? "再生中" : "停止中"}</p>
                   </div>
                 </div>
 
-                <div>
-                  <Label>システムプロンプト</Label>
+                <div className="w-full">
+                  <Label className="text-sm font-medium">システムプロンプト</Label>
                   <Select value={selectedSystemPrompt} onValueChange={setSelectedSystemPrompt}>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="システムプロンプトを選択" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">デフォルト</SelectItem>
                       {systemPrompts.map((prompt) => (
                         <SelectItem key={prompt.id} value={prompt.id}>
-                          {prompt.name}
+                          {prompt.name} {prompt.is_default && "(デフォルト)"}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div>
-                  <Label>分析プロンプト</Label>
+                <div className="w-full">
+                  <Label className="text-sm font-medium">分析プロンプト</Label>
                   <Select value={selectedAnalysisPrompt} onValueChange={setSelectedAnalysisPrompt}>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="分析プロンプトを選択" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">デフォルト</SelectItem>
                       {visualAnalysisPrompts.map((prompt) => (
                         <SelectItem key={prompt.id} value={prompt.id}>
                           {prompt.name}
@@ -1585,13 +1471,13 @@ export default function AIVisionChatPage() {
                   </Select>
                 </div>
 
-                <div>
-                  <Label>分析頻度 (秒)</Label>
+                <div className="w-full">
+                  <Label className="text-sm font-medium">分析頻度 (秒)</Label>
                   <Select
                     value={analysisFrequency.toString()}
                     onValueChange={(value) => setAnalysisFrequency(Number.parseInt(value))}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1643,9 +1529,7 @@ export default function AIVisionChatPage() {
                     <Volume2 className="w-4 h-4" />
                     TTS機能について
                   </h4>
-                  <p className="text-sm text-yellow-700">
-                    Cloud TTSが利用できない場合、ブラウザ内蔵の音声合成機能を自動的に使用します。
-                  </p>
+                  <p className="text-sm text-yellow-700">Cloud TTSを使用します。</p>
                 </div>
               </div>
             </TabsContent>

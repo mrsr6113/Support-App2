@@ -307,6 +307,211 @@ const useUniversalSpeechRecognition = () => {
   }
 }
 
+// Enhanced TTS hook with fallback to browser SpeechSynthesis
+const useTextToSpeech = () => {
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isSupported, setIsSupported] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+
+  useEffect(() => {
+    // Check if browser supports SpeechSynthesis
+    setIsSupported(typeof window !== "undefined" && "speechSynthesis" in window)
+  }, [])
+
+  const speakWithBrowserAPI = (text: string) => {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        // Stop any existing speech
+        if (window.speechSynthesis.speaking) {
+          window.speechSynthesis.cancel()
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text)
+        utteranceRef.current = utterance
+
+        // Configure utterance
+        utterance.lang = "ja-JP"
+        utterance.rate = 1.0
+        utterance.pitch = 1.0
+        utterance.volume = 0.8
+
+        // Try to find a Japanese voice
+        const voices = window.speechSynthesis.getVoices()
+        const japaneseVoice = voices.find((voice) => voice.lang.startsWith("ja"))
+        if (japaneseVoice) {
+          utterance.voice = japaneseVoice
+        }
+
+        utterance.onstart = () => {
+          console.log("Browser TTS started")
+          setIsSpeaking(true)
+        }
+
+        utterance.onend = () => {
+          console.log("Browser TTS ended")
+          setIsSpeaking(false)
+          utteranceRef.current = null
+          resolve()
+        }
+
+        utterance.onerror = (event) => {
+          console.error("Browser TTS error:", event.error)
+          setIsSpeaking(false)
+          utteranceRef.current = null
+          reject(new Error(`Browser TTS error: ${event.error}`))
+        }
+
+        window.speechSynthesis.speak(utterance)
+      } catch (error) {
+        console.error("Browser TTS setup error:", error)
+        setIsSpeaking(false)
+        reject(error)
+      }
+    })
+  }
+
+  const speakWithCloudAPI = async (text: string) => {
+    // Stop any existing audio
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    const response = await fetch("/api/text-to-speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Language-Code": "ja-JP",
+      },
+      body: JSON.stringify({ text }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Cloud TTS API error: ${response.status} ${response.statusText}`)
+    }
+
+    const audioBlob = await response.blob()
+
+    if (audioBlob.size === 0) {
+      throw new Error("Empty audio response")
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      audioRef.current = audio
+
+      audio.onloadeddata = () => {
+        console.log("Cloud TTS audio loaded successfully")
+      }
+
+      audio.oncanplaythrough = () => {
+        console.log("Cloud TTS audio can play through")
+        setIsSpeaking(true)
+        audio.play().catch((error) => {
+          console.error("Cloud TTS audio play error:", error)
+          setIsSpeaking(false)
+          URL.revokeObjectURL(audioUrl)
+          reject(error)
+        })
+      }
+
+      audio.onended = () => {
+        console.log("Cloud TTS playback completed")
+        setIsSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+        audioRef.current = null
+        resolve()
+      }
+
+      audio.onerror = (error) => {
+        console.error("Cloud TTS audio playback error:", error)
+        setIsSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+        audioRef.current = null
+        reject(error)
+      }
+
+      // Set volume and load
+      audio.volume = 0.8
+      audio.load()
+    })
+  }
+
+  const speak = async (text: string) => {
+    if (isSpeaking) {
+      console.log("Already speaking, ignoring new request")
+      return
+    }
+
+    console.log("Starting TTS for text:", text.substring(0, 50) + "...")
+
+    try {
+      // Try Cloud API first
+      await speakWithCloudAPI(text)
+      console.log("Cloud TTS completed successfully")
+    } catch (cloudError) {
+      console.warn("Cloud TTS failed, falling back to browser API:", cloudError)
+
+      if (!isSupported) {
+        console.error("Browser TTS not supported")
+        throw new Error("音声読み上げ機能が利用できません")
+      }
+
+      try {
+        // Wait for voices to be loaded
+        if (window.speechSynthesis.getVoices().length === 0) {
+          await new Promise<void>((resolve) => {
+            const checkVoices = () => {
+              if (window.speechSynthesis.getVoices().length > 0) {
+                resolve()
+              } else {
+                setTimeout(checkVoices, 100)
+              }
+            }
+            checkVoices()
+          })
+        }
+
+        await speakWithBrowserAPI(text)
+        console.log("Browser TTS completed successfully")
+      } catch (browserError) {
+        console.error("Browser TTS also failed:", browserError)
+        throw new Error("音声読み上げに失敗しました")
+      }
+    }
+  }
+
+  const stop = () => {
+    console.log("Stopping TTS")
+
+    // Stop Cloud API audio
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    // Stop browser TTS
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel()
+    }
+
+    if (utteranceRef.current) {
+      utteranceRef.current = null
+    }
+
+    setIsSpeaking(false)
+  }
+
+  return {
+    speak,
+    stop,
+    isSpeaking,
+    isSupported,
+  }
+}
+
 const CATEGORIES = [
   { value: "general", label: "一般" },
   { value: "coffee_maker", label: "コーヒーメーカー" },
@@ -328,7 +533,6 @@ export default function AIVisionChatPage() {
   const [userInput, setUserInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isSpeaking, setIsSpeaking] = useState(false)
 
   // Media state
   const [inputMode, setInputMode] = useState<"camera" | "screen">("camera")
@@ -358,6 +562,9 @@ export default function AIVisionChatPage() {
     isInitialized,
   } = useUniversalSpeechRecognition()
 
+  // Enhanced TTS state
+  const { speak: speakText, stop: stopSpeaking, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech()
+
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false)
 
@@ -384,7 +591,6 @@ export default function AIVisionChatPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ragImageInputRef = useRef<HTMLInputElement>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // Mobile detection
   useEffect(() => {
@@ -694,87 +900,6 @@ export default function AIVisionChatPage() {
     // Remove automatic TTS playback - only manual TTS via button
   }
 
-  // Enhanced universal TTS function
-  const speakText = async (text: string) => {
-    if (!isVoiceEnabled || isSpeaking) return
-
-    try {
-      setIsSpeaking(true)
-      console.log("Starting TTS for text:", text.substring(0, 50) + "...")
-
-      // Stop any existing audio
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current = null
-      }
-
-      const response = await fetch("/api/text-to-speech", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Language-Code": "ja-JP",
-        },
-        body: JSON.stringify({ text }),
-      })
-
-      if (!response.ok) {
-        // Handle specific error codes
-        if (response.status === 403) {
-          console.warn("TTS API access forbidden - feature disabled")
-          setIsSpeaking(false)
-          return // Silently fail for 403 errors
-        }
-        throw new Error(`TTS API error: ${response.status} ${response.statusText}`)
-      }
-
-      const audioBlob = await response.blob()
-
-      if (audioBlob.size === 0) {
-        throw new Error("Empty audio response")
-      }
-
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      audioRef.current = audio
-
-      // Enhanced audio event handling
-      audio.onloadeddata = () => {
-        console.log("Audio loaded successfully")
-      }
-
-      audio.oncanplaythrough = () => {
-        console.log("Audio can play through")
-        audio.play().catch((error) => {
-          console.error("Audio play error:", error)
-          setIsSpeaking(false)
-          URL.revokeObjectURL(audioUrl)
-        })
-      }
-
-      audio.onended = () => {
-        console.log("TTS playback completed")
-        setIsSpeaking(false)
-        URL.revokeObjectURL(audioUrl)
-        audioRef.current = null
-      }
-
-      audio.onerror = (error) => {
-        console.error("Audio playback error:", error)
-        setIsSpeaking(false)
-        URL.revokeObjectURL(audioUrl)
-        audioRef.current = null
-      }
-
-      // Set volume and load
-      audio.volume = 0.8
-      audio.load()
-    } catch (error) {
-      console.error("Text-to-speech error:", error)
-      setIsSpeaking(false)
-      // Don't show error to user for TTS failures
-    }
-  }
-
   // Enhanced Intelligent Analysis function
   const handleIntelligentAnalyze = async (isAutomatic = false) => {
     const imageData = captureFrame()
@@ -934,6 +1059,26 @@ export default function AIVisionChatPage() {
     } else {
       // Start continuous voice recognition
       await startListening(true)
+    }
+  }
+
+  // Enhanced TTS control function
+  const handleTTSToggle = async () => {
+    if (isSpeaking) {
+      stopSpeaking()
+    } else {
+      // Read the current input or last AI message
+      const textToRead =
+        userInput.trim() ||
+        chatMessages.filter((msg) => msg.type === "ai").slice(-1)[0]?.content ||
+        "読み上げるテキストがありません"
+
+      try {
+        await speakText(textToRead)
+      } catch (error) {
+        console.error("TTS error:", error)
+        setError("音声読み上げに失敗しました")
+      }
     }
   }
 
@@ -1314,28 +1459,16 @@ export default function AIVisionChatPage() {
 
                 {/* Text-to-Speech Button */}
                 <Button
-                  onClick={() => {
-                    if (isSpeaking) {
-                      // Stop current speech
-                      if (audioRef.current) {
-                        audioRef.current.pause()
-                        audioRef.current = null
-                      }
-                      setIsSpeaking(false)
-                    } else {
-                      // Read the current input or last AI message
-                      const textToRead =
-                        userInput.trim() ||
-                        chatMessages.filter((msg) => msg.type === "ai").slice(-1)[0]?.content ||
-                        "読み上げるテキストがありません"
-                      speakText(textToRead)
-                    }
-                  }}
+                  onClick={handleTTSToggle}
                   variant="outline"
-                  disabled={!isVoiceEnabled}
+                  disabled={!isTTSSupported}
                   className={isSpeaking ? "bg-blue-100 border-blue-300" : ""}
                   title={
-                    !isVoiceEnabled ? "音声読み上げが無効です" : isSpeaking ? "読み上げを停止" : "テキストを読み上げ"
+                    !isTTSSupported
+                      ? "音声読み上げはサポートされていません"
+                      : isSpeaking
+                        ? "読み上げを停止"
+                        : "テキストを読み上げ"
                   }
                 >
                   {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -1406,14 +1539,15 @@ export default function AIVisionChatPage() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
                     <Mic className="w-4 h-4" />
-                    音声認識設定
+                    音声機能設定
                   </h4>
 
                   <div className="text-sm text-blue-700 space-y-1">
                     <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
+                    <p>• 音声読み上げ: {isTTSSupported ? "利用可能" : "利用不可"}</p>
                     <p>• 初期化状態: {isInitialized ? "完了" : "未完了"}</p>
                     <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
-                    <p>• 継続モード: {isContinuous ? "有効" : "無効"}</p>
+                    <p>• 読み上げ状態: {isSpeaking ? "再生中" : "停止中"}</p>
                   </div>
                 </div>
 
@@ -1502,6 +1636,16 @@ export default function AIVisionChatPage() {
                     <li>• 「停止」: カメラを停止</li>
                     <li>• PC/モバイル両対応</li>
                   </ul>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
+                    <Volume2 className="w-4 h-4" />
+                    TTS機能について
+                  </h4>
+                  <p className="text-sm text-yellow-700">
+                    Cloud TTSが利用できない場合、ブラウザ内蔵の音声合成機能を自動的に使用します。
+                  </p>
                 </div>
               </div>
             </TabsContent>

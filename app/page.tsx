@@ -691,9 +691,7 @@ export default function AIVisionChatPage() {
       saveChatSession(sessionId, message)
     }
 
-    if (type === "ai" && isVoiceEnabled) {
-      speakText(content)
-    }
+    // Remove automatic TTS playback - only manual TTS via button
   }
 
   // Enhanced universal TTS function
@@ -720,6 +718,12 @@ export default function AIVisionChatPage() {
       })
 
       if (!response.ok) {
+        // Handle specific error codes
+        if (response.status === 403) {
+          console.warn("TTS API access forbidden - feature disabled")
+          setIsSpeaking(false)
+          return // Silently fail for 403 errors
+        }
         throw new Error(`TTS API error: ${response.status} ${response.statusText}`)
       }
 
@@ -767,13 +771,7 @@ export default function AIVisionChatPage() {
     } catch (error) {
       console.error("Text-to-speech error:", error)
       setIsSpeaking(false)
-
-      // Show user-friendly error
-      if (error instanceof Error) {
-        setError(`音声読み上げエラー: ${error.message}`)
-      } else {
-        setError("音声読み上げ中にエラーが発生しました")
-      }
+      // Don't show error to user for TTS failures
     }
   }
 
@@ -910,11 +908,23 @@ export default function AIVisionChatPage() {
 
   // Enhanced voice control functions
   const handleVoiceToggle = async () => {
+    console.log("Voice toggle clicked, current state:", { isListening, isSpeechSupported, isInitialized })
+
+    if (!isSpeechSupported) {
+      setError("音声認識はこのブラウザではサポートされていません")
+      return
+    }
+
     if (isListening) {
       stopListening()
     } else {
       // Start single-shot voice recognition
-      await startListening(false)
+      try {
+        await startListening(false)
+      } catch (error) {
+        console.error("Failed to start voice recognition:", error)
+        setError("音声認識の開始に失敗しました")
+      }
     }
   }
 
@@ -1392,37 +1402,18 @@ export default function AIVisionChatPage() {
 
             <TabsContent value="settings" className="space-y-4 mt-4">
               <div className="grid grid-cols-1 gap-4">
-                {/* Voice and TTS Settings */}
+                {/* Voice and TTS Settings - Simplified */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                    <Volume2 className="w-4 h-4" />
-                    音声機能設定
+                    <Mic className="w-4 h-4" />
+                    音声認識設定
                   </h4>
 
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="voice-enabled">音声読み上げ</Label>
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          id="voice-enabled"
-                          checked={isVoiceEnabled}
-                          onChange={(e) => setIsVoiceEnabled(e.target.checked)}
-                          className="rounded"
-                        />
-                        {isSpeaking ? (
-                          <Volume2 className="w-4 h-4 text-blue-500" />
-                        ) : (
-                          <VolumeX className="w-4 h-4 text-gray-400" />
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="text-sm text-blue-700">
-                      <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
-                      <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
-                      <p>• 読み上げ: {isSpeaking ? "再生中" : "停止中"}</p>
-                    </div>
+                  <div className="text-sm text-blue-700 space-y-1">
+                    <p>• 音声入力: {isSpeechSupported ? "利用可能" : "利用不可"}</p>
+                    <p>• 初期化状態: {isInitialized ? "完了" : "未完了"}</p>
+                    <p>• 認識状態: {isListening ? "認識中" : "待機中"}</p>
+                    <p>• 継続モード: {isContinuous ? "有効" : "無効"}</p>
                   </div>
                 </div>
 
